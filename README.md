@@ -31,7 +31,7 @@ VocoLoco runs [OmniVoice](https://github.com/k2-fsa/OmniVoice) (a diffusion-base
 
 ## License
 
-- **VocoLoco app**: MIT
+- **VocoLoco app**: Apache License 2.0
 - **ONNX models**: Apache 2.0 (derived from [OmniVoice](https://github.com/k2-fsa/OmniVoice) by Xiaomi/k2-fsa)
 
 ## Attribution
