@@ -394,13 +394,7 @@ async function init(modelBaseUrl) {
     config = await (await fetch(`${modelBaseUrl}/omnivoice-config.json`)).json();
 
     postMessage({ type: 'progress', stage: 'loading', detail: 'Loading tokenizer (Qwen2 BPE)...' });
-    // Point transformers.js at our server to find tokenizer.json
-    const baseOrigin = new URL(modelBaseUrl).origin;
-    const basePath = new URL(modelBaseUrl).pathname.replace(/\/$/, '');
-    tfEnv.remoteHost = baseOrigin + '/';
-    tfEnv.remotePathTemplate = '{model}/';
-    // from_pretrained('models/tts') → fetches <origin>/models/tts/tokenizer.json
-    tokenizer = await AutoTokenizer.from_pretrained(basePath.slice(1));
+    tokenizer = await AutoTokenizer.from_pretrained('Gigsu/vocoloco-onnx');
     postMessage({ type: 'progress', stage: 'loading', detail: 'Tokenizer loaded.' });
 
     const ep = [];
