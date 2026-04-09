@@ -624,10 +624,15 @@
 </script>
 
 <script>
-// Early WebGPU check — before loading any heavy scripts
+// Early WebGPU + device check — before loading any heavy scripts
 (async () => {
+  // Block mobile devices outright — even if they report WebGPU support,
+  // they cannot practically run a 2.5 GB model.
+  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 1 && !window.matchMedia('(pointer:fine)').matches);
+
   let ok = false;
-  if (navigator.gpu) {
+  if (!isMobile && navigator.gpu) {
     try { ok = !!(await navigator.gpu.requestAdapter()); } catch {}
   }
   if (!ok) {
