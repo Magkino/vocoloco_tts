@@ -623,6 +623,32 @@
   });
 </script>
 
-<script type="module" src="app.js?v=4"></script>
+<script>
+// Early WebGPU check — before loading any heavy scripts
+(async () => {
+  let ok = false;
+  if (navigator.gpu) {
+    try { ok = !!(await navigator.gpu.requestAdapter()); } catch {}
+  }
+  if (!ok) {
+    document.querySelector('main').innerHTML = `
+      <div style="text-align:center;padding:60px 24px;">
+        <div style="font-size:48px;margin-bottom:16px;">\uD83D\uDDA5\uFE0F</div>
+        <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Desktop Browser Required</h2>
+        <p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:340px;margin:0 auto 20px;">
+          VocoLoco requires WebGPU to run its 2.5 GB model. Mobile browsers and some desktop browsers do not support WebGPU yet.
+        </p>
+        <p style="color:#94a3b8;font-size:13px;line-height:1.6;max-width:340px;margin:0 auto;">
+          Please use <strong style="color:white;">Chrome</strong> or <strong style="color:white;">Edge</strong> on a desktop/laptop with a dedicated GPU.
+        </p>
+      </div>`;
+    return; // don't load app.js at all
+  }
+  const s = document.createElement('script');
+  s.type = 'module';
+  s.src = 'app.js?v=4';
+  document.body.appendChild(s);
+})();
+</script>
 </body>
 </html>
