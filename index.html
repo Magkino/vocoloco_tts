@@ -555,8 +555,24 @@
     });
   }
 
+  async function getCacheAPISize(cacheName) {
+    try {
+      const cache = await caches.open(cacheName);
+      const keys = await cache.keys();
+      let total = 0;
+      for (const req of keys) {
+        const resp = await cache.match(req);
+        if (resp) {
+          const blob = await resp.blob();
+          total += blob.size;
+        }
+      }
+      return total;
+    } catch { return 0; }
+  }
+
   async function calculateStorage() {
-    const modelsSize = await getDBSize('omnivoice-cache');
+    const modelsSize = await getCacheAPISize('omnivoice-models-v1');
     const historySize = await getDBSize('omnivoice-history');
     const voicesSize = await getDBSize('omnivoice-voices');
     const total = modelsSize + historySize + voicesSize;
@@ -577,6 +593,8 @@
 
   document.getElementById('clear-cache-btn').addEventListener('click', async () => {
     if (!confirm('Clear cached models? You will need to re-download ~3 GB on next load.')) return;
+    await caches.delete('omnivoice-models-v1');
+    // Also clean up legacy IndexedDB cache if present
     await clearDB('omnivoice-cache');
     calculateStorage();
   });
@@ -597,6 +615,7 @@
 
   document.getElementById('clear-all-btn').addEventListener('click', async () => {
     if (!confirm('Clear ALL local data? Models will need to re-download (~3 GB).')) return;
+    await caches.delete('omnivoice-models-v1');
     await clearDB('omnivoice-cache');
     await clearDB('omnivoice-history');
     await clearDB('omnivoice-voices');

@@ -22,48 +22,19 @@ let encoderSession = null;
 let tokenizer = null;
 let config = null;
 
-// ─── IndexedDB cache ────────────────────────────────────────────────────────
+// ─── Cache API ─────────────────────────────────────────────────────────────
 
-const DB_NAME = 'omnivoice-cache';
-const DB_VERSION = 1;
-const STORE_NAME = 'models';
+const CACHE_NAME = 'omnivoice-models-v1';
 
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE_NAME);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function cacheGet(key) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get(key);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function cachePut(key, value) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(value, key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-// ─── Fetch with progress + IndexedDB caching ───────────────────────────────
+// ─── Fetch with progress + Cache API caching ──────────────────────────────
 
 async function fetchWithProgress(url, onProgress) {
-  const cached = await cacheGet(url);
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(url);
   if (cached) {
-    if (onProgress) onProgress(cached.byteLength, cached.byteLength);
-    return cached;
+    const buf = await cached.arrayBuffer();
+    if (onProgress) onProgress(buf.byteLength, buf.byteLength);
+    return buf;
   }
 
   const resp = await fetch(url);
@@ -84,7 +55,12 @@ async function fetchWithProgress(url, onProgress) {
   for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
   const buf = result.buffer;
 
-  try { await cachePut(url, buf); } catch (e) { console.warn('Cache store failed:', e); }
+  // Store in Cache API — no structured clone needed, stores as a Response blob
+  try {
+    await cache.put(url, new Response(buf, {
+      headers: { 'Content-Length': String(buf.byteLength), 'Content-Type': 'application/octet-stream' }
+    }));
+  } catch (e) { console.warn('Cache store failed:', e); }
   return buf;
 }
 
