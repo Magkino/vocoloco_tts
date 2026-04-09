@@ -476,7 +476,7 @@ async function init(modelBaseUrl, force = false) {
 async function synthesize(params) {
   const {
     text, lang = null, refAudio = null, refText = null, instruct = null,
-    numStep = 20, guidanceScale = 4.0, tShift = 0.05, speed = 0.8,
+    numStep = 20, guidanceScale = 4.0, tShift = 0.05, speed = 1.0,
     seed = null,
   } = params;
 
