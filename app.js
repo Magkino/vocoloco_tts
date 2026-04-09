@@ -318,7 +318,7 @@ function hideProgress() {
 // ─── Worker ────────────────────────────────────────────────────────────────
 
 function initWorker() {
-  ttsWorker = new Worker('workers/tts-worker.js', { type: 'module' });
+  ttsWorker = new Worker('workers/tts-worker.js?v=2', { type: 'module' });
   ttsWorker.onmessage = (e) => {
     const msg = e.data;
     switch (msg.type) {
