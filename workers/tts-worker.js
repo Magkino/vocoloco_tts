@@ -440,6 +440,23 @@ async function init(modelBaseUrl) {
       encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: ['wasm'] });
     }
 
+    // Warm up all sessions with dummy data to compile GPU shaders
+    postMessage({ type: 'progress', stage: 'loading', detail: 'Warming up...' });
+    try {
+      const dummyIds = new BigInt64Array(2 * 8 * 4).fill(1024n);
+      const dummyMask = new Uint8Array(2 * 4);
+      const dummyAttn = new Uint8Array(2 * 1 * 4 * 4).fill(1);
+      await mainSession.run({
+        input_ids: new ort.Tensor('int64', dummyIds, [2, 8, 4]),
+        audio_mask: new ort.Tensor('bool', dummyMask, [2, 4]),
+        attention_mask: new ort.Tensor('bool', dummyAttn, [2, 1, 4, 4]),
+      });
+      const dummyCodes = new BigInt64Array(8 * 2).fill(0n);
+      await decoderSession.run({ audio_codes: new ort.Tensor('int64', dummyCodes, [1, 8, 2]) });
+      const dummyAudio = new Float32Array(960);
+      await encoderSession.run({ input_values: new ort.Tensor('float32', dummyAudio, [1, 1, 960]) });
+    } catch (e) { /* warm-up errors are non-fatal */ }
+
     postMessage({ type: 'ready' });
   } catch (err) {
     postMessage({ type: 'error', message: `Init failed: ${err.message}` });
