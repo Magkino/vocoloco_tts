@@ -26,7 +26,7 @@ VocoLoco runs [OmniVoice](https://github.com/k2-fsa/OmniVoice) (a diffusion-base
 ## Requirements
 
 - Desktop browser with WebGPU support (Chrome 113+, Edge 113+)
-- ~ 10 GB free VRAM
+- GPU with sufficient VRAM (WebGPU accelerated)
 - ~3 GB storage for cached models (one-time download)
 
 ## License

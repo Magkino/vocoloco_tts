@@ -349,6 +349,19 @@ function initWorker() {
         onAudio(msg.pcm, msg.sampleRate);
         break;
       case 'error':
+        if (msg.message === 'DESKTOP_ONLY') {
+          const sep = location.search ? '&' : '?';
+          document.querySelector('.app').innerHTML = `
+            <div style="text-align:center;padding:60px 24px;">
+              <div style="font-size:48px;margin-bottom:16px;">🖥️</div>
+              <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Desktop Recommended</h2>
+              <p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:340px;margin:0 auto 20px;">
+                VocoLoco downloads ~3 GB of model data and requires significant GPU/VRAM to run inference. This will most likely not work on mobile devices.
+              </p>
+              <button onclick="location.href=location.href+'${sep}force=1'" style="padding:10px 24px;border-radius:10px;background:#1e293b;border:1px solid #2d3748;color:#94a3b8;font-size:13px;cursor:pointer;transition:all 0.15s;">Try anyway (not recommended)</button>
+            </div>`;
+          return;
+        }
         setStatus(msg.message);
         console.error(msg.message);
         isGenerating = false;
@@ -357,7 +370,8 @@ function initWorker() {
         break;
     }
   };
-  ttsWorker.postMessage({ type: 'init', modelBaseUrl: MODEL_BASE_URL });
+  const forceLoad = new URLSearchParams(window.location.search).has('force');
+  ttsWorker.postMessage({ type: 'init', modelBaseUrl: MODEL_BASE_URL, force: forceLoad });
   showProgress('indeterminate');
 }
 

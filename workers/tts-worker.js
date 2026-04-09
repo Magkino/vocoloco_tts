@@ -388,8 +388,16 @@ function postProcessAudio(pcm, sr) {
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 
-async function init(modelBaseUrl) {
+async function init(modelBaseUrl, force = false) {
   try {
+    // Detect mobile/low-memory — abort before downloading 3 GB
+    const isMobile = /Mobile|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const deviceMem = navigator.deviceMemory || 0;
+    if (!force && (isMobile || (deviceMem > 0 && deviceMem < 6))) {
+      postMessage({ type: 'error', message: 'DESKTOP_ONLY' });
+      return;
+    }
+
     postMessage({ type: 'progress', stage: 'loading', detail: 'Loading config...' });
     config = await (await fetch(`${modelBaseUrl}/omnivoice-config.json`)).json();
 
@@ -531,6 +539,6 @@ async function synthesize(params) {
 
 self.onmessage = async (e) => {
   const msg = e.data;
-  if (msg.type === 'init') await init(msg.modelBaseUrl);
+  if (msg.type === 'init') await init(msg.modelBaseUrl, msg.force);
   else if (msg.type === 'synthesize') await synthesize(msg);
 };
