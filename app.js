@@ -351,7 +351,7 @@ function initWorker() {
       case 'error':
         if (msg.message === 'DESKTOP_ONLY') {
           const sep = location.search ? '&' : '?';
-          document.querySelector('.app').innerHTML = `
+          document.querySelector('main').innerHTML = `
             <div style="text-align:center;padding:60px 24px;">
               <div style="font-size:48px;margin-bottom:16px;">🖥️</div>
               <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Desktop Recommended</h2>
