@@ -349,16 +349,17 @@ function initWorker() {
         onAudio(msg.pcm, msg.sampleRate);
         break;
       case 'error':
-        if (msg.message === 'DESKTOP_ONLY') {
-          const sep = location.search ? '&' : '?';
+        if (msg.message === 'NO_WEBGPU') {
           document.querySelector('main').innerHTML = `
             <div style="text-align:center;padding:60px 24px;">
               <div style="font-size:48px;margin-bottom:16px;">🖥️</div>
-              <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Desktop Recommended</h2>
+              <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Desktop Browser Required</h2>
               <p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:340px;margin:0 auto 20px;">
-                VocoLoco downloads ~3 GB of model data and requires significant GPU/VRAM to run inference. This will most likely not work on mobile devices.
+                VocoLoco requires WebGPU to run its 2.5 GB model. Mobile browsers and some desktop browsers do not support WebGPU yet.
               </p>
-              <button onclick="location.href=location.href+'${sep}force=1'" style="padding:10px 24px;border-radius:10px;background:#1e293b;border:1px solid #2d3748;color:#94a3b8;font-size:13px;cursor:pointer;transition:all 0.15s;">Try anyway (not recommended)</button>
+              <p style="color:#94a3b8;font-size:13px;line-height:1.6;max-width:340px;margin:0 auto;">
+                Please use <strong style="color:white;">Chrome</strong> or <strong style="color:white;">Edge</strong> on a desktop/laptop with a dedicated GPU.
+              </p>
             </div>`;
           return;
         }
@@ -370,8 +371,7 @@ function initWorker() {
         break;
     }
   };
-  const forceLoad = new URLSearchParams(window.location.search).has('force');
-  ttsWorker.postMessage({ type: 'init', modelBaseUrl: MODEL_BASE_URL, force: forceLoad });
+  ttsWorker.postMessage({ type: 'init', modelBaseUrl: MODEL_BASE_URL });
   showProgress('indeterminate');
 }
 

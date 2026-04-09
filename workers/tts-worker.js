@@ -364,13 +364,18 @@ function postProcessAudio(pcm, sr) {
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 
-async function init(modelBaseUrl, force = false) {
+async function init(modelBaseUrl) {
   try {
-    // Detect mobile/low-memory — abort before downloading 3 GB
-    const isMobile = /Mobile|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const deviceMem = navigator.deviceMemory || 0;
-    if (!force && (isMobile || (deviceMem > 0 && deviceMem < 6))) {
-      postMessage({ type: 'error', message: 'DESKTOP_ONLY' });
+    // Check for working WebGPU — model is too large (~2.5 GB) for WASM-only execution
+    let hasWorkingGPU = false;
+    if (typeof navigator !== 'undefined' && navigator.gpu) {
+      try {
+        const adapter = await navigator.gpu.requestAdapter();
+        hasWorkingGPU = !!adapter;
+      } catch {}
+    }
+    if (!hasWorkingGPU) {
+      postMessage({ type: 'error', message: 'NO_WEBGPU' });
       return;
     }
 
@@ -515,6 +520,6 @@ async function synthesize(params) {
 
 self.onmessage = async (e) => {
   const msg = e.data;
-  if (msg.type === 'init') await init(msg.modelBaseUrl, msg.force);
+  if (msg.type === 'init') await init(msg.modelBaseUrl);
   else if (msg.type === 'synthesize') await synthesize(msg);
 };
