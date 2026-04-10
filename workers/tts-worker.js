@@ -412,9 +412,11 @@ async function init(modelBaseUrl) {
 
     // Load decoder
     postMessage({ type: 'progress', stage: 'loading', detail: 'Loading decoder (~83 MB)...' });
-    decoderSession = await ort.InferenceSession.create(
-      `${modelBaseUrl}/omnivoice-decoder.onnx`, { executionProviders: ep }
-    );
+    const decBuf = await fetchWithProgress(`${modelBaseUrl}/omnivoice-decoder.onnx`, (loaded, total) => {
+      const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '83';
+      postMessage({ type: 'progress', stage: 'downloading', detail: `Decoder: ${lMB}/${tMB} MB` });
+    });
+    decoderSession = await ort.InferenceSession.create(decBuf, { executionProviders: ep });
 
     // Load encoder (for voice cloning)
     postMessage({ type: 'progress', stage: 'loading', detail: 'Loading encoder (~654 MB)...' });
