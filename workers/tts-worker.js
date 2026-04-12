@@ -431,43 +431,51 @@ async function init(modelBaseUrl, forceCPU) {
     tokenizer = await AutoTokenizer.from_pretrained('Gigsu/vocoloco-onnx');
     postMessage({ type: 'progress', stage: 'loading', detail: 'Tokenizer loaded.' });
 
-    // ── Load all model data (parallel when cached) ─────────────────────────
+    // ── Load model data ────────────────────────────────────────────────────
     postMessage({ type: 'progress', stage: 'downloading', detail: 'Loading models...' });
     const dataFiles = await (await fetch(`${modelBaseUrl}/omnivoice-main-manifest.json`)).json();
 
-    // Fetch all model files: shards + decoder + encoder
-    const fetchPromises = [];
-    for (let i = 0; i < dataFiles.length; i++) {
-      const fname = dataFiles[i];
-      fetchPromises.push(fetchWithProgress(`${modelBaseUrl}/${fname}`,
-        (loaded, total) => {
+    // Check if all models are cached
+    const cache = await caches.open(CACHE_NAME);
+    const allUrls = [
+      ...dataFiles.map(f => `${modelBaseUrl}/${f}`),
+      `${modelBaseUrl}/omnivoice-decoder.onnx`,
+      `${modelBaseUrl}/omnivoice-encoder-fixed.onnx`,
+    ];
+    const cacheChecks = await Promise.all(allUrls.map(u => cache.match(u)));
+    const allCached = cacheChecks.every(Boolean);
+
+    let shardBuffers, decBuf, encBuf;
+
+    if (allCached) {
+      // All cached: load in parallel (fast)
+      postMessage({ type: 'progress', stage: 'loading', detail: 'Loading from cache...' });
+      const results = await Promise.all(allUrls.map(u => fetchWithProgress(u, null, null)));
+      shardBuffers = results.slice(0, dataFiles.length);
+      decBuf = results[dataFiles.length];
+      encBuf = results[dataFiles.length + 1];
+    } else {
+      // Not cached: download sequentially with progress
+      shardBuffers = [];
+      for (let i = 0; i < dataFiles.length; i++) {
+        const fname = dataFiles[i];
+        postMessage({ type: 'progress', stage: 'downloading', detail: `Shard ${i + 1}/${dataFiles.length}...` });
+        shardBuffers.push(await fetchWithProgress(`${modelBaseUrl}/${fname}`, (loaded, total) => {
           const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '?';
           postMessage({ type: 'progress', stage: 'downloading', detail: `Shard ${i + 1}/${dataFiles.length}: ${lMB}/${tMB} MB` });
-        },
-        () => postMessage({ type: 'progress', stage: 'loading', detail: `Shard ${i + 1}/${dataFiles.length} (cached)` })
-      ));
-    }
-    const decPromise = fetchWithProgress(`${modelBaseUrl}/omnivoice-decoder.onnx`,
-      (loaded, total) => {
+        }));
+      }
+      postMessage({ type: 'progress', stage: 'downloading', detail: 'Downloading decoder...' });
+      decBuf = await fetchWithProgress(`${modelBaseUrl}/omnivoice-decoder.onnx`, (loaded, total) => {
         const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '83';
         postMessage({ type: 'progress', stage: 'downloading', detail: `Decoder: ${lMB}/${tMB} MB` });
-      },
-      () => postMessage({ type: 'progress', stage: 'loading', detail: 'Decoder (cached)' })
-    );
-    const encPromise = fetchWithProgress(`${modelBaseUrl}/omnivoice-encoder-fixed.onnx`,
-      (loaded, total) => {
+      });
+      postMessage({ type: 'progress', stage: 'downloading', detail: 'Downloading encoder...' });
+      encBuf = await fetchWithProgress(`${modelBaseUrl}/omnivoice-encoder-fixed.onnx`, (loaded, total) => {
         const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '654';
         postMessage({ type: 'progress', stage: 'downloading', detail: `Encoder: ${lMB}/${tMB} MB` });
-      },
-      () => postMessage({ type: 'progress', stage: 'loading', detail: 'Encoder (cached)' })
-    );
-
-    // Await all downloads/cache reads in parallel
-    const [shardBuffers, decBuf, encBuf] = await Promise.all([
-      Promise.all(fetchPromises),
-      decPromise,
-      encPromise,
-    ]);
+      });
+    }
 
     const externalData = dataFiles.map((fname, i) => ({ path: fname, data: shardBuffers[i] }));
 
