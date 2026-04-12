@@ -6,11 +6,12 @@
 import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.all.mjs';
 import { AutoTokenizer, env as tfEnv } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/dist/transformers.min.js';
 import { estimateTargetTokens } from '../duration-estimator.js';
+import { GpuPostProcessor } from './gpu-postprocess.js';
 
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
 
-// Maximize performance
-ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
+// Maximize performance — multi-threading requires cross-origin isolation (COOP/COEP headers)
+ort.env.wasm.numThreads = self.crossOriginIsolated ? (navigator.hardwareConcurrency || 4) : 1;
 ort.env.wasm.simd = true;
 
 // Configure transformers.js to load tokenizer from our server
@@ -21,6 +22,7 @@ let decoderSession = null;
 let encoderSession = null;
 let tokenizer = null;
 let config = null;
+let gpuPostProc = null;
 
 // ─── Cache API ─────────────────────────────────────────────────────────────
 
@@ -110,6 +112,37 @@ function logSoftmaxInto(arr, offset, len, out) {
   for (let i = 0; i < len; i++) out[i] = arr[offset + i] - lse;
 }
 
+function cpuPostProcess(logits, C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty, pred, scores) {
+  const gScale1 = 1 + guidanceScale;
+  for (let c = 0; c < C; c++) {
+    const layerScore = layerPenalty * c;
+    for (let t = 0; t < numTargetTokens; t++) {
+      const cOff = (c * maxLen + targetOff + t) * V;
+      const uOff = ((C + c) * maxLen + t) * V;
+      logSoftmaxInto(logits, cOff, V, _cLP);
+      logSoftmaxInto(logits, uOff, V, _uLP);
+      let mx = -Infinity;
+      for (let v = 0; v < V; v++) {
+        const gv = gScale1 * _cLP[v] - guidanceScale * _uLP[v];
+        _g[v] = gv;
+        if (gv > mx) mx = gv;
+      }
+      let sm = 0;
+      for (let v = 0; v < V; v++) sm += Math.exp(_g[v] - mx);
+      const lse = mx + Math.log(sm);
+      let bestV = 0, bestS = -Infinity;
+      for (let v = 0; v < V; v++) {
+        if (v === maskId) continue;
+        const lp = _g[v] - lse;
+        if (lp > bestS) { bestS = lp; bestV = v; }
+      }
+      const idx = c * numTargetTokens + t;
+      pred[idx] = bestV;
+      scores[idx] = bestS - layerScore;
+    }
+  }
+}
+
 // ─── Prepare inference inputs ───────────────────────────────────────────────
 
 async function prepareInferenceInputs(text, numTargetTokens, tok, cfg, opts = {}) {
@@ -176,7 +209,7 @@ async function prepareInferenceInputs(text, numTargetTokens, tok, cfg, opts = {}
 
 // ─── Top-k unmask using partial selection ───────────────────────────────────
 
-function topKUnmask(scores, pred, tokens, n, k, bigMaskId) {
+function topKUnmask(scores, pred, tokens, n, k) {
   // Find k-th largest score using nth_element-style partition
   // For small k (typically 2-300), a simple selection is fast enough
   const indices = new Int32Array(n);
@@ -248,7 +281,12 @@ async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layer
     sched.push(n); rem -= n;
   }
 
-  let totalInferenceMs = 0, totalModelMs = 0;
+  if (gpuPostProc) {
+    try { gpuPostProc.prepare(C, maxLen, V, numTargetTokens); }
+    catch (e) { console.warn('[gpu-postprocess] prepare failed:', e.message); gpuPostProc.destroy(); gpuPostProc = null; }
+  }
+
+  let totalInferenceMs = 0, totalModelMs = 0, totalGpuPPMs = 0;
   for (let step = 0; step < numStep; step++) {
     const k = sched[step];
     if (k <= 0) continue;
@@ -268,42 +306,41 @@ async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layer
     const scores = step === 0 ? new Float32Array(nPos) : scores_buf;
     if (step === 0) { pred_buf = pred; scores_buf = scores; }
 
-    const gScale1 = 1 + guidanceScale;
-    for (let c = 0; c < C; c++) {
-      const layerScore = layerPenalty * c;
-      for (let t = 0; t < numTargetTokens; t++) {
-        const cOff = (c * maxLen + targetOff + t) * V;
-        const uOff = ((C + c) * maxLen + t) * V;
-
-        // Inline log-softmax into pre-allocated buffers
-        logSoftmaxInto(logits, cOff, V, _cLP);
-        logSoftmaxInto(logits, uOff, V, _uLP);
-
-        // CFG + log-softmax + argmax fused in one pass
-        // g[v] = (1+scale)*cLP[v] - scale*uLP[v]
-        let mx = -Infinity;
-        for (let v = 0; v < V; v++) {
-          const gv = gScale1 * _cLP[v] - guidanceScale * _uLP[v];
-          _g[v] = gv;
-          if (gv > mx) mx = gv;
+    const ppT0 = performance.now();
+    if (gpuPostProc) {
+      try {
+        await gpuPostProc.run(logits, {
+          C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty
+        }, pred, scores);
+        // On first step, benchmark CPU too and keep whichever is faster
+        if (step === 0) {
+          const gpuMs = performance.now() - ppT0;
+          const cpuPred = new Int32Array(nPos);
+          const cpuScores = new Float32Array(nPos);
+          const cpuT0 = performance.now();
+          cpuPostProcess(logits, C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty, cpuPred, cpuScores);
+          const cpuMs = performance.now() - cpuT0;
+          if (cpuMs < gpuMs) {
+            console.log(`[gpu-postprocess] CPU faster (${cpuMs.toFixed(0)}ms) than GPU (${gpuMs.toFixed(0)}ms), switching to CPU`);
+            // Use CPU results for this step
+            pred.set(cpuPred);
+            scores.set(cpuScores);
+            gpuPostProc.destroy();
+            gpuPostProc = null;
+          } else {
+            console.log(`[gpu-postprocess] GPU (${gpuMs.toFixed(0)}ms) faster than CPU (${cpuMs.toFixed(0)}ms), keeping GPU`);
+          }
         }
-        let sm = 0;
-        for (let v = 0; v < V; v++) sm += Math.exp(_g[v] - mx);
-        const lse = mx + Math.log(sm);
-
-        // Find best (skip maskId)
-        let bestV = 0, bestS = -Infinity;
-        for (let v = 0; v < V; v++) {
-          if (v === maskId) continue;
-          const lp = _g[v] - lse;
-          if (lp > bestS) { bestS = lp; bestV = v; }
-        }
-
-        const idx = c * numTargetTokens + t;
-        pred[idx] = bestV;
-        scores[idx] = bestS - layerScore;
+      } catch (e) {
+        console.warn('[gpu-postprocess] dispatch failed, falling back to CPU:', e.message);
+        gpuPostProc.destroy();
+        gpuPostProc = null;
+        cpuPostProcess(logits, C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty, pred, scores);
       }
+    } else {
+      cpuPostProcess(logits, C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty, pred, scores);
     }
+    totalGpuPPMs += performance.now() - ppT0;
 
     // Gumbel noise + mask already-unmasked (fused)
     const bigMaskId = BigInt(maskId);
@@ -319,7 +356,7 @@ async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layer
     }
 
     // Partial top-k using quickselect instead of full sort
-    topKUnmask(scores, pred, tokens, nPos, k, bigMaskId);
+    topKUnmask(scores, pred, tokens, nPos, k);
 
 
     // Update batch inputs
@@ -335,7 +372,8 @@ async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layer
     postMessage({ type: 'progress', stage: 'generating', detail: `Step ${step + 1}/${numStep} (${stepMs.toFixed(0)}ms)` });
   }
   const jsMs = totalInferenceMs - totalModelMs;
-  console.log(`[perf] ${numStep} steps in ${totalInferenceMs.toFixed(0)}ms total | model: ${totalModelMs.toFixed(0)}ms (${(totalModelMs/numStep).toFixed(0)}ms/step) | JS: ${jsMs.toFixed(0)}ms (${(jsMs/numStep).toFixed(0)}ms/step)`);
+  const ppLabel = gpuPostProc ? 'GPU-PP' : 'CPU-PP';
+  console.log(`[perf] ${numStep} steps in ${totalInferenceMs.toFixed(0)}ms total | model: ${totalModelMs.toFixed(0)}ms (${(totalModelMs/numStep).toFixed(0)}ms/step) | ${ppLabel}: ${totalGpuPPMs.toFixed(0)}ms (${(totalGpuPPMs/numStep).toFixed(0)}ms/step) | JS-other: ${(jsMs - totalGpuPPMs).toFixed(0)}ms`);
 
   return tokens;
 }
@@ -364,19 +402,33 @@ function postProcessAudio(pcm, sr) {
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 
-async function init(modelBaseUrl) {
+async function init(modelBaseUrl, forceCPU) {
   try {
-    // Check for working WebGPU — model is too large (~2.5 GB) for WASM-only execution
+    // Detect WebGPU — used for ONNX acceleration and GPU post-processing
+    // Append ?cpu to the page URL to force CPU-only mode for testing
     let hasWorkingGPU = false;
-    if (typeof navigator !== 'undefined' && navigator.gpu) {
+    if (!forceCPU && typeof navigator !== 'undefined' && navigator.gpu) {
       try {
         const adapter = await navigator.gpu.requestAdapter();
         hasWorkingGPU = !!adapter;
       } catch {}
     }
+    if (forceCPU) console.log('[init] Forced CPU mode via ?cpu flag');
     if (!hasWorkingGPU) {
-      postMessage({ type: 'error', message: 'NO_WEBGPU' });
-      return;
+      console.warn('[init] No WebGPU — ONNX will use WASM, post-processing will use CPU. Expect slower inference.');
+      postMessage({ type: 'progress', stage: 'loading', detail: 'No WebGPU detected — running in CPU mode (slower)' });
+    }
+
+    // Init GPU post-processor (separate device, non-blocking)
+    if (hasWorkingGPU) {
+      try {
+        gpuPostProc = new GpuPostProcessor();
+        await gpuPostProc.init();
+        console.log('[init] GPU post-processor ready');
+      } catch (e) {
+        console.warn('[init] GPU post-processor unavailable, using CPU fallback:', e.message);
+        gpuPostProc = null;
+      }
     }
 
     postMessage({ type: 'progress', stage: 'loading', detail: 'Loading config...' });
@@ -385,11 +437,6 @@ async function init(modelBaseUrl) {
     postMessage({ type: 'progress', stage: 'loading', detail: 'Loading tokenizer (Qwen2 BPE)...' });
     tokenizer = await AutoTokenizer.from_pretrained('Gigsu/vocoloco-onnx');
     postMessage({ type: 'progress', stage: 'loading', detail: 'Tokenizer loaded.' });
-
-    const ep = [];
-    if (typeof navigator !== 'undefined' && navigator.gpu) ep.push('webgpu');
-    ep.push('wasm');
-    console.log(`[init] Execution providers: ${ep.join(', ')}, threads: ${ort.env.wasm.numThreads}, GPU available: ${!!navigator.gpu}`);
 
     // Load main model (FP32, sharded)
     postMessage({ type: 'progress', stage: 'downloading', detail: 'Loading manifest...' });
@@ -404,19 +451,39 @@ async function init(modelBaseUrl) {
       });
       externalData.push({ path: fname, data: buf });
     }
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Creating model session...' });
-    mainSession = await ort.InferenceSession.create(
-      `${modelBaseUrl}/omnivoice-main-split.onnx`,
-      { executionProviders: ep, externalData, graphOptimizationLevel: 'all', enableCpuMemArena: true }
-    );
 
-    // Load decoder
+    // Try WebGPU EP first for the main model; fall back to WASM if it fails
+    let actualBackend = 'cpu';
+    postMessage({ type: 'progress', stage: 'loading', detail: 'Creating model session...' });
+    if (hasWorkingGPU) {
+      try {
+        mainSession = await ort.InferenceSession.create(
+          `${modelBaseUrl}/omnivoice-main-split.onnx`,
+          { executionProviders: ['webgpu'], externalData, graphOptimizationLevel: 'all', enableCpuMemArena: true }
+        );
+        actualBackend = 'webgpu';
+      } catch (e) {
+        console.warn('[init] Main model WebGPU failed, falling back to WASM:', e.message);
+        mainSession = null;
+      }
+    }
+    if (!mainSession) {
+      mainSession = await ort.InferenceSession.create(
+        `${modelBaseUrl}/omnivoice-main-split.onnx`,
+        { executionProviders: ['wasm'], externalData, graphOptimizationLevel: 'all', enableCpuMemArena: true }
+      );
+      actualBackend = 'cpu';
+    }
+    console.log(`[init] Main model backend: ${actualBackend}, threads: ${ort.env.wasm.numThreads}`);
+
+    // Load decoder (use same backend as main model)
+    const decEp = actualBackend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
     postMessage({ type: 'progress', stage: 'loading', detail: 'Loading decoder (~83 MB)...' });
     const decBuf = await fetchWithProgress(`${modelBaseUrl}/omnivoice-decoder.onnx`, (loaded, total) => {
       const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '83';
       postMessage({ type: 'progress', stage: 'downloading', detail: `Decoder: ${lMB}/${tMB} MB` });
     });
-    decoderSession = await ort.InferenceSession.create(decBuf, { executionProviders: ep });
+    decoderSession = await ort.InferenceSession.create(decBuf, { executionProviders: decEp });
 
     // Load encoder (for voice cloning)
     postMessage({ type: 'progress', stage: 'loading', detail: 'Loading encoder (~654 MB)...' });
@@ -425,7 +492,7 @@ async function init(modelBaseUrl) {
       postMessage({ type: 'progress', stage: 'downloading', detail: `Encoder: ${lMB}/${tMB} MB` });
     });
     try {
-      encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: ep });
+      encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: decEp });
     } catch (e) {
       console.warn('Encoder WebGPU failed, falling back to WASM:', e.message);
       encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: ['wasm'] });
@@ -448,7 +515,7 @@ async function init(modelBaseUrl) {
       await encoderSession.run({ input_values: new ort.Tensor('float32', dummyAudio, [1, 1, 960]) });
     } catch (e) { /* warm-up errors are non-fatal */ }
 
-    postMessage({ type: 'ready' });
+    postMessage({ type: 'ready', backend: actualBackend });
   } catch (err) {
     postMessage({ type: 'error', message: `Init failed: ${err.message}` });
   }
@@ -522,6 +589,6 @@ async function synthesize(params) {
 
 self.onmessage = async (e) => {
   const msg = e.data;
-  if (msg.type === 'init') await init(msg.modelBaseUrl);
+  if (msg.type === 'init') await init(msg.modelBaseUrl, msg.forceCPU);
   else if (msg.type === 'synthesize') await synthesize(msg);
 };

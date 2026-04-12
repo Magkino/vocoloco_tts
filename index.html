@@ -8,37 +8,10 @@
 <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
 <title>VocoLoco</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link rel="stylesheet" href="tailwind.css">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-  body { font-family: 'Inter', sans-serif; }
+  body { font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
 </style>
-<script>
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: {
-          'omni-bg': '#0f131a',
-          'omni-panel': '#1a2028',
-          'omni-border': '#2d3748',
-          'omni-neon': '#4ade80',
-          'omni-neon-muted': 'rgba(74, 222, 128, 0.2)',
-          'omni-text-muted': '#94a3b8',
-          'omni-active-bg': '#273c38',
-          'omni-btn-bg': '#1e293b',
-        },
-        boxShadow: {
-          'neon': '0 0 10px rgba(74, 222, 128, 0.3)',
-          'neon-strong': '0 0 20px rgba(74, 222, 128, 0.5)',
-          'glass': '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
-        },
-        backgroundImage: {
-          'circuit-pattern': "url('data:image/svg+xml,%3Csvg width=\"60\" height=\"60\" viewBox=\"0 0 60 60\" xmlns=\"http://www.w3.org/2000/svg\"%3E%3Cg fill=\"none\" fill-rule=\"evenodd\"%3E%3Cg fill=\"%232d3748\" fill-opacity=\"0.1\"%3E%3Cpath d=\"M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\"/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')",
-          }
-      }
-    }
-  }
-</script>
 <style>
   .glass-panel {
     background: rgba(26, 32, 40, 0.7);
@@ -47,12 +20,12 @@
     border: 1px solid rgba(255, 255, 255, 0.05);
   }
   .neon-border {
-    border: 1px solid theme('colors.omni-neon');
-    box-shadow: theme('boxShadow.neon');
+    border: 1px solid #4ade80;
+    box-shadow: 0 0 10px rgba(74, 222, 128, 0.3);
   }
   textarea::-webkit-scrollbar { width: 6px; }
   textarea::-webkit-scrollbar-track { background: transparent; }
-  textarea::-webkit-scrollbar-thumb { background-color: theme('colors.omni-border'); border-radius: 10px; }
+  textarea::-webkit-scrollbar-thumb { background-color: #2d3748; border-radius: 10px; }
 
   /* Toggle button styles */
   .toggle-btn {
@@ -70,8 +43,17 @@
   }
 
   /* Quality toggle */
-  .quality-btn { @apply toggle-btn; white-space: nowrap; }
-  .quality-btn.active { @apply toggle-btn active; }
+  .quality-btn {
+    flex: 1; padding: 8px 16px; border-radius: 8px;
+    font-size: 14px; font-weight: 500; transition: all 0.15s;
+    cursor: pointer; text-align: center; user-select: none;
+    color: #9ca3af; border: 1px solid transparent; white-space: nowrap;
+  }
+  .quality-btn.active {
+    background: #273c38; color: #4ade80;
+    border-color: #4ade80;
+    box-shadow: 0 0 10px rgba(74, 222, 128, 0.2);
+  }
 
   /* Saved voice pills */
   .saved-voice {
@@ -130,6 +112,28 @@
   }
   @keyframes indeterminate {
     0% { left: -30%; } 100% { left: 100%; }
+  }
+
+  /* Loading spinner */
+  .loading-spinner {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 3px solid rgba(74, 222, 128, 0.15);
+    border-top-color: #4ade80;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Generate button — cancel state */
+  .btn-cancel {
+    background: rgba(239, 68, 68, 0.1) !important;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171 !important;
+    animation: cancel-pulse 1.5s ease-in-out infinite;
+  }
+  .btn-cancel:hover { background: rgba(239, 68, 68, 0.18) !important; }
+  @keyframes cancel-pulse {
+    0%,100% { border-color: rgba(239, 68, 68, 0.4); }
+    50% { border-color: rgba(239, 68, 68, 0.7); }
   }
 
   /* Player reveal */
@@ -234,7 +238,7 @@
     </aside>
 
     <!-- Content -->
-    <section class="content-area flex-1 bg-omni-panel/80 rounded-r-3xl overflow-y-auto relative">
+    <section class="content-area flex-1 bg-omni-panel/80 rounded-r-3xl overflow-y-auto overflow-x-hidden relative">
 
       <!-- Mobile tab bar -->
       <div class="mobile-tabs">
@@ -250,13 +254,21 @@
       <div class="progress-bar hidden" id="progress-bar" style="width:0%"></div>
 
       <!-- Status -->
-      <div id="status" class="text-center text-omni-text-muted text-sm font-medium min-h-[20px]">Loading models...</div>
+      <div class="flex items-center justify-center gap-2 min-h-[20px]">
+        <div id="status" class="text-center text-omni-text-muted text-sm font-medium">Loading models...</div>
+        <span id="backend-badge" class="hidden text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border"></span>
+      </div>
 
       <!-- Text Input -->
       <div class="relative group">
         <div class="absolute -inset-0.5 bg-gradient-to-r from-omni-neon to-blue-500 rounded-2xl blur opacity-20 group-hover:opacity-30 transition duration-500"></div>
         <div class="relative bg-omni-bg rounded-2xl p-5 neon-border flex flex-col" style="min-height: 180px;">
-          <textarea id="text-input" maxlength="500" class="w-full flex-1 bg-transparent border-none text-gray-300 focus:ring-0 resize-none text-base leading-relaxed placeholder-omni-text-muted/50 outline-none" placeholder="Enter text to generate speech..." disabled></textarea>
+          <!-- Loading overlay (shown until models are ready) -->
+          <div id="loading-overlay" class="absolute inset-0 rounded-2xl flex flex-col items-center justify-center gap-3 z-10" style="background: rgba(15,19,26,0.85); backdrop-filter: blur(4px);">
+            <div class="loading-spinner"></div>
+            <span class="text-omni-text-muted text-sm font-medium">Loading models, please wait...</span>
+          </div>
+          <textarea id="text-input" maxlength="500" class="w-full flex-1 bg-transparent border-none text-gray-300 focus:ring-0 resize-none text-base leading-relaxed placeholder-omni-text-muted/50 outline-none" placeholder="Try: The quick brown fox jumps over the lazy dog." disabled></textarea>
           <div class="text-right text-omni-text-muted text-xs mt-2"><span id="char-count">0</span> / 500</div>
         </div>
       </div>
@@ -294,13 +306,16 @@
         </div>
       </div>
 
-      <!-- Voice badge -->
-      <div class="text-center text-omni-text-muted text-xs" id="voice-badge-text">female, moderate pitch</div>
+      <!-- Voice badge (used for clone mode only) -->
+      <div class="text-center text-omni-text-muted text-xs hidden" id="voice-badge-text"></div>
 
-      <!-- Generate -->
-      <button id="generate-btn" disabled class="w-full py-4 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-base tracking-wide transition-all hover:shadow-neon-strong hover:scale-[1.01] active:scale-[0.99] disabled:opacity-30 disabled:cursor-default disabled:hover:shadow-none disabled:hover:scale-100">
-        Generate Speech
-      </button>
+      <!-- Generate (transforms into Cancel during generation) -->
+      <div class="flex flex-col gap-2">
+        <button id="generate-btn" disabled class="w-full py-4 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-base tracking-wide transition-all hover:shadow-neon-strong hover:scale-[1.01] active:scale-[0.99] disabled:opacity-30 disabled:cursor-default disabled:hover:shadow-none disabled:hover:scale-100">
+          Generate Speech
+        </button>
+        <div id="time-estimate" class="text-center text-omni-text-muted text-xs hidden"></div>
+      </div>
 
       <!-- Player (appears after generation) -->
       <div id="studio-player" class="hidden">
@@ -310,7 +325,7 @@
           <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-omni-border/30 bg-omni-bg/50">
             <div class="flex items-center gap-2">
               <button id="replay-btn" class="py-2 px-4 rounded-lg bg-omni-active-bg text-omni-neon border border-omni-neon/40 shadow-neon font-semibold text-xs transition-all hover:shadow-neon-strong active:scale-95">&#9654; Replay</button>
-              <button id="download-btn" class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-white border border-omni-border text-xs font-semibold transition-all active:scale-95">&#8595; WAV</button>
+              <button id="download-btn" class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-white border border-omni-border text-xs font-semibold transition-all active:scale-95">&#8595; MP3</button>
               <button id="save-gen-voice-btn" class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-omni-neon border border-omni-border text-xs font-semibold transition-all hover:border-omni-neon/30 active:scale-95">Save Voice</button>
             </div>
             <span id="player-duration" class="text-omni-text-muted text-xs font-medium"></span>
@@ -322,7 +337,8 @@
       <div class="pt-4 border-t border-omni-border/50">
         <label class="block text-omni-text-muted text-xs uppercase tracking-wider mb-3 font-semibold">Cloned Voices</label>
         <div class="flex flex-wrap gap-2" id="saved-voices"></div>
-        <button id="new-clone-btn" class="mt-2 py-2 px-5 rounded-full bg-omni-bg border border-omni-border border-dashed text-gray-400 hover:text-white hover:border-gray-500 font-medium text-sm transition-all">+ New Clone</button>
+        <button id="new-clone-btn" class="mt-2 py-2 px-5 rounded-full bg-omni-bg border border-omni-border border-dashed text-gray-400 hover:text-white hover:border-gray-500 font-medium text-sm transition-all">+ Clone a Voice</button>
+        <p class="mt-2 text-omni-text-muted text-xs">Upload or record a 5-10s audio sample to clone any voice.</p>
 
         <!-- Clone panel (expandable) -->
         <div class="clone-panel mt-3" id="clone-panel">
@@ -511,14 +527,18 @@
     </div>
   </div>
 
-  <!-- Disclaimer -->
+  <!-- Disclaimer & Legal -->
   <div class="text-center text-omni-text-muted/60 text-[10px] leading-relaxed max-w-lg px-4">
-    <p class="mb-1"><strong class="text-omni-text-muted/80">Disclaimer</strong></p>
-    <p>VocoLoco is an open-source research project. All audio processing runs entirely in your browser — no data is sent to any server. Generated speech should not be used to impersonate real individuals without consent. The developers assume no liability for misuse. Voice cloning features are intended for personal and creative use only.</p>
+    <p class="mb-1"><strong class="text-omni-text-muted/80">Disclaimer &amp; Legal Notice</strong></p>
+    <p class="mb-2"><strong class="text-omni-text-muted/80">How it works.</strong> All speech synthesis runs locally in your browser. No audio, text, or voice data is uploaded to any server. However, on first use (and after cache clears), the app downloads AI model weights (~2.5&nbsp;GB) from <strong class="text-omni-text-muted/80">Hugging&nbsp;Face</strong> (huggingface.co) and runtime libraries from <strong class="text-omni-text-muted/80">jsDelivr</strong> (cdn.jsdelivr.net). These downloads expose your IP address, browser user-agent, and referrer to those services under their respective privacy policies. Once cached, no further network requests are made during synthesis.</p>
+    <p class="mb-2"><strong class="text-omni-text-muted/80">AI-generated content.</strong> All audio produced by this tool is synthetic speech generated by an AI model (<a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">OmniVoice</a>). Downloaded WAV files contain machine-readable metadata (RIFF LIST&nbsp;INFO) identifying them as AI-generated in accordance with EU&nbsp;AI&nbsp;Act Art.&nbsp;50. Do not remove or alter this metadata.</p>
+    <p class="mb-2"><strong class="text-omni-text-muted/80">User obligations under the EU&nbsp;AI&nbsp;Act.</strong> If you publish or distribute audio generated by this tool, you are legally required to disclose its synthetic nature to your audience (Art.&nbsp;50(4)), including audible disclaimers where applicable. Using this tool to impersonate real individuals without their explicit consent, to create deceptive deepfakes, or to strip or circumvent AI content-marking is prohibited and may constitute a violation of the EU&nbsp;AI&nbsp;Act and other applicable law.</p>
+    <p class="mb-2"><strong class="text-omni-text-muted/80">No warranty.</strong> This tool is provided as-is, without warranty of any kind, for personal, creative, and research purposes. The developers accept no liability for the content users generate, for any downstream use or misuse, or for the availability, accuracy, or conduct of third-party services (Hugging&nbsp;Face, jsDelivr, GitHub).</p>
+    <p><strong class="text-omni-text-muted/80">Third-party services:</strong> <a href="https://huggingface.co/privacy" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">Hugging&nbsp;Face Privacy&nbsp;Policy</a> &middot; <a href="https://www.jsdelivr.com/terms/privacy-policy-jsdelivr-net" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">jsDelivr Privacy&nbsp;Policy</a> &middot; <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">GitHub Privacy&nbsp;Statement</a></p>
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px]">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Runs 100% locally
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser
   </div>
 
 </footer>
@@ -643,28 +663,70 @@
   const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1 && !window.matchMedia('(pointer:fine)').matches);
 
-  let ok = false;
-  if (!isMobile && navigator.gpu) {
-    try { ok = !!(await navigator.gpu.requestAdapter()); } catch {}
-  }
-  if (!ok) {
+  if (isMobile) {
     document.querySelector('main').innerHTML = `
       <div style="text-align:center;padding:60px 24px;">
         <div style="font-size:48px;margin-bottom:16px;">\uD83D\uDDA5\uFE0F</div>
         <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Desktop Browser Required</h2>
         <p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:340px;margin:0 auto 20px;">
-          VocoLoco requires WebGPU to run its 2.5 GB model. Mobile browsers and some desktop browsers do not support WebGPU yet.
+          VocoLoco loads a 2.5 GB model that exceeds the memory limits mobile browsers impose on a single tab.
         </p>
         <p style="color:#94a3b8;font-size:13px;line-height:1.6;max-width:340px;margin:0 auto;">
-          Please use <strong style="color:white;">Chrome</strong> or <strong style="color:white;">Edge</strong> on a desktop/laptop with a dedicated GPU.
+          Please use a desktop or laptop browser.
         </p>
       </div>`;
     return; // don't load app.js at all
   }
+
+  // Detect issues before loading heavy scripts
+  const isFirefox = /Firefox\//i.test(navigator.userAgent);
+  const forceCPU = location.search.includes('cpu');
+  let hasGPU = false;
+  if (!forceCPU && navigator.gpu) {
+    try { hasGPU = !!(await navigator.gpu.requestAdapter()); } catch {}
+  }
+
+  const warnings = [];
+  if (isFirefox) {
+    warnings.push('Firefox runs up to 2x slower than other browsers for this workload.');
+  }
+  if (!hasGPU) {
+    warnings.push('WebGPU is not available. Inference will run on the CPU via WebAssembly, which is significantly slower. This requires a browser that supports WebGPU <em>and</em> a dedicated GPU.');
+  }
+
+  if (warnings.length > 0) {
+    const mainEl = document.querySelector('main');
+    const origHTML = mainEl.innerHTML;
+    mainEl.innerHTML = `
+      <div style="text-align:center;padding:60px 24px;">
+        <div style="font-size:48px;margin-bottom:16px;">&#9888;&#65039;</div>
+        <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Performance Warning</h2>
+        ${warnings.map(w => `<p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:380px;margin:0 auto 10px;">${w}</p>`).join('')}
+        <p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:380px;margin:0 auto 20px;">
+          For the best experience, use <strong style="color:white;">Chrome</strong> or <strong style="color:white;">Edge</strong>.
+        </p>
+        <button id="warn-continue-btn" style="margin-top:8px;padding:10px 28px;border-radius:10px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);color:#f59e0b;font-size:14px;font-weight:600;cursor:pointer;">
+          Continue anyway
+        </button>
+      </div>`;
+    await new Promise(resolve => {
+      document.getElementById('warn-continue-btn').addEventListener('click', () => {
+        mainEl.innerHTML = origHTML;
+        resolve();
+      });
+    });
+  }
   const s = document.createElement('script');
-  s.type = 'module';
-  s.src = 'app.js?v=4';
-  document.body.appendChild(s);
+  // Load lamejs for MP3 encoding (must load before app.js)
+  const lame = document.createElement('script');
+  lame.src = 'lib/lamejs.min.js';
+  lame.onload = () => {
+    const s = document.createElement('script');
+    s.type = 'module';
+    s.src = 'app.js?v=5';
+    document.body.appendChild(s);
+  };
+  document.body.appendChild(lame);
 })();
 </script>
 </body>

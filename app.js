@@ -32,6 +32,7 @@ const charCount = document.getElementById('char-count');
 const progressBar = document.getElementById('progress-bar');
 const replayBtn = document.getElementById('replay-btn');
 const downloadBtn = document.getElementById('download-btn');
+const loadingOverlay = document.getElementById('loading-overlay');
 const playerDuration = document.getElementById('player-duration');
 const historySectionEl = document.getElementById('history-section');
 const historyScrollEl = document.getElementById('history-scroll');
@@ -155,6 +156,7 @@ if (qualityRow) {
       btn.classList.add('active');
       // Sync to hidden select
       qualityEl.value = btn.dataset.val;
+      updateTimeEstimate();
     });
   });
 }
@@ -205,22 +207,22 @@ function updateVoiceUI() {
   genderRow.parentElement.querySelector('label').style.opacity = cloning ? '0.3' : '1';
   pitchRow.parentElement.querySelector('label').style.opacity = cloning ? '0.3' : '1';
 
-  // Update badge and button
+  // Update badge (only visible in clone mode) and button
   if (selectedSavedVoice) {
     voiceBadgeText.textContent = `Using cloned voice: "${selectedSavedVoice.name}"`;
     voiceBadgeText.style.color = '#4ade80';
+    voiceBadgeText.classList.remove('hidden');
     generateBtn.textContent = `Generate as "${selectedSavedVoice.name}"`;
   } else if (clonePanelOpen && (recordedBlob || (refAudioEl.files && refAudioEl.files.length > 0))) {
     voiceBadgeText.textContent = 'Using new cloned voice';
     voiceBadgeText.style.color = '#4ade80';
+    voiceBadgeText.classList.remove('hidden');
     generateBtn.textContent = 'Generate with Clone';
   } else {
-    const gender = getToggleVal(genderRow);
-    const pitch = getToggleVal(pitchRow);
-    voiceBadgeText.textContent = `${gender}, ${pitch}`;
-    voiceBadgeText.style.color = '';
+    voiceBadgeText.classList.add('hidden');
     generateBtn.textContent = 'Generate Speech';
   }
+  updateTimeEstimate();
 }
 
 // Alias for compat
@@ -315,7 +317,48 @@ function hideProgress() {
   progressBar.style.width = '0%';
 }
 
-// ─── Worker ────────────────────────────────────────────────────────────────
+// ─── Ready handler (backend badge, CPU warning, enable UI) ──���─────────────
+
+function enableUI() {
+  isReady = true;
+  setStatus('Ready');
+  hideProgress();
+  if (loadingOverlay) {
+    loadingOverlay.style.transition = 'opacity 0.3s';
+    loadingOverlay.style.opacity = '0';
+    setTimeout(() => { loadingOverlay.remove(); }, 300);
+  }
+  generateBtn.disabled = false;
+  textEl.disabled = false;
+  refAudioEl.disabled = false;
+  refTextEl.disabled = false;
+  micBtn.disabled = false;
+  saveVoiceNameEl.disabled = false;
+  saveVoiceBtn.disabled = false;
+}
+
+function onReady(backend) {
+  // Show backend badge
+  const badge = document.getElementById('backend-badge');
+  if (badge) {
+    const isGpu = backend === 'webgpu';
+    badge.textContent = isGpu ? 'GPU' : 'CPU';
+    badge.classList.remove('hidden');
+    if (isGpu) {
+      badge.style.color = '#4ade80';
+      badge.style.borderColor = 'rgba(74,222,128,0.4)';
+      badge.style.background = 'rgba(74,222,128,0.1)';
+    } else {
+      badge.style.color = '#f59e0b';
+      badge.style.borderColor = 'rgba(245,158,11,0.4)';
+      badge.style.background = 'rgba(245,158,11,0.1)';
+    }
+  }
+
+  enableUI();
+}
+
+// ─── Worker ───────────────────────────────────────────────────────���────────
 
 function initWorker() {
   ttsWorker = new Worker('workers/tts-worker.js?v=3', { type: 'module' });
@@ -324,54 +367,38 @@ function initWorker() {
     switch (msg.type) {
       case 'progress':
         setStatus(msg.detail);
-        // Try to parse step progress for bar
-        const stepMatch = msg.detail?.match?.(/(\d+)\s*\/\s*(\d+)/);
+        // Try to parse step progress for bar + track ms/step
+        const stepMatch = msg.detail?.match?.(/Step (\d+)\/(\d+) \((\d+)ms\)/);
         if (stepMatch) {
-          const [, current, total] = stepMatch;
+          const [, current, total, stepMs] = stepMatch;
           setProgressPercent((parseInt(current) / parseInt(total)) * 100);
+          msPerStep = parseInt(stepMs);
         } else {
-          showProgress('indeterminate');
+          const genericMatch = msg.detail?.match?.(/(\d+)\s*\/\s*(\d+)/);
+          if (genericMatch) {
+            const [, current, total] = genericMatch;
+            setProgressPercent((parseInt(current) / parseInt(total)) * 100);
+          } else {
+            showProgress('indeterminate');
+          }
         }
         break;
       case 'ready':
-        isReady = true;
-        setStatus('Ready');
-        hideProgress();
-        generateBtn.disabled = false;
-        textEl.disabled = false;
-        refAudioEl.disabled = false;
-        refTextEl.disabled = false;
-        micBtn.disabled = false;
-        saveVoiceNameEl.disabled = false;
-        saveVoiceBtn.disabled = false;
+        onReady(msg.backend);
         break;
       case 'audio':
         onAudio(msg.pcm, msg.sampleRate);
         break;
       case 'error':
-        if (msg.message === 'NO_WEBGPU') {
-          document.querySelector('main').innerHTML = `
-            <div style="text-align:center;padding:60px 24px;">
-              <div style="font-size:48px;margin-bottom:16px;">🖥️</div>
-              <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Desktop Browser Required</h2>
-              <p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:340px;margin:0 auto 20px;">
-                VocoLoco requires WebGPU to run its 2.5 GB model. Mobile browsers and some desktop browsers do not support WebGPU yet.
-              </p>
-              <p style="color:#94a3b8;font-size:13px;line-height:1.6;max-width:340px;margin:0 auto;">
-                Please use <strong style="color:white;">Chrome</strong> or <strong style="color:white;">Edge</strong> on a desktop/laptop with a dedicated GPU.
-              </p>
-            </div>`;
-          return;
-        }
         setStatus(msg.message);
         console.error(msg.message);
         isGenerating = false;
-        generateBtn.disabled = false;
+        setGenerating(false);
         hideProgress();
         break;
     }
   };
-  ttsWorker.postMessage({ type: 'init', modelBaseUrl: MODEL_BASE_URL });
+  ttsWorker.postMessage({ type: 'init', modelBaseUrl: MODEL_BASE_URL, forceCPU: location.search.includes('cpu') });
   showProgress('indeterminate');
 }
 
@@ -403,24 +430,40 @@ function onAudio(pcm, sampleRate) {
   drawWaveform(pcm);
   playerDuration.textContent = duration.toFixed(1) + 's';
 
-  // Play audio
+  // Play audio and scroll into view
   playPcm(pcm, sampleRate);
-
-  // Scroll player into view
   if (studioPlayer) studioPlayer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   setStatus(`Playing ${duration.toFixed(1)}s`);
   hideProgress();
   isGenerating = false;
-  generateBtn.disabled = false;
+  setGenerating(false);
 }
 
-function playPcm(pcm, sampleRate) {
-  // Stop any currently playing audio
+function updateReplayBtn() {
+  if (!replayBtn) return;
+  if (currentSource) {
+    replayBtn.innerHTML = '&#9632; Stop';
+    replayBtn.classList.add('bg-red-500/20', 'border-red-400/40', 'text-red-400');
+    replayBtn.classList.remove('bg-omni-active-bg', 'text-omni-neon', 'border-omni-neon/40', 'shadow-neon');
+  } else {
+    replayBtn.innerHTML = '&#9654; Replay';
+    replayBtn.classList.remove('bg-red-500/20', 'border-red-400/40', 'text-red-400');
+    replayBtn.classList.add('bg-omni-active-bg', 'text-omni-neon', 'border-omni-neon/40', 'shadow-neon');
+  }
+}
+
+function stopPlayback() {
   if (currentSource) {
     try { currentSource.stop(); } catch (e) { /* ignore */ }
     currentSource = null;
+    updateReplayBtn();
+    if (!isGenerating) setStatus('Ready');
   }
+}
+
+function playPcm(pcm, sampleRate) {
+  stopPlayback();
 
   const ctx = getAudioCtx();
   const buf = ctx.createBuffer(1, pcm.length, sampleRate);
@@ -430,10 +473,12 @@ function playPcm(pcm, sampleRate) {
   src.connect(ctx.destination);
   src.onended = () => {
     currentSource = null;
+    updateReplayBtn();
     if (!isGenerating) setStatus('Ready');
   };
   currentSource = src;
   src.start();
+  updateReplayBtn();
 }
 
 function drawBarVisualizer(canvas, pcm, numBars) {
@@ -502,32 +547,94 @@ function drawWaveform(pcm) {
   drawBarVisualizer(waveformEl, pcm);
 }
 
-// ─── WAV Download ──────────────────────────────────────────────────────────
+// ─── MP3 Download (with ID3v2 provenance metadata) ─────────────────────────
 
-function downloadWav(pcm, sampleRate, filename) {
-  const numSamples = pcm.length;
-  const bytesPerSample = 2;
-  const dataSize = numSamples * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-  const writeStr = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
-  writeStr(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeStr(8, 'WAVE');
-  writeStr(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * bytesPerSample, true);
-  view.setUint16(32, bytesPerSample, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, 'data');
-  view.setUint32(40, dataSize, true);
-  for (let i = 0; i < numSamples; i++) {
-    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7FFF, true);
+function buildId3v2Tag() {
+  const enc = new TextEncoder();
+  // ID3v2.3 text frames: [frameId, text]
+  const textFrames = [
+    ['TSSE', 'VocoLoco (OmniVoice TTS, browser-based)'],
+    ['TCON', 'AI-generated speech'],
+    ['TDRC', new Date().toISOString()],
+  ];
+  // COMM frame (comment) has special structure
+  const comment = 'AI-generated synthetic speech. This audio was produced entirely by an artificial intelligence text-to-speech model. EU AI Act Art. 50 \u2014 not a recording of a human voice.';
+
+  // Calculate total size
+  let framesSize = 0;
+  const builtFrames = [];
+  for (const [id, text] of textFrames) {
+    const textBytes = enc.encode(text);
+    const frameDataSize = 1 + textBytes.length; // encoding byte + text
+    framesSize += 10 + frameDataSize;
+    builtFrames.push({ id, encoding: 3, data: textBytes, size: frameDataSize }); // 3 = UTF-8
   }
-  const blob = new Blob([buffer], { type: 'audio/wav' });
+  // COMM frame: encoding(1) + lang(3) + short desc null-term + text
+  const commBytes = enc.encode(comment);
+  const commDataSize = 1 + 3 + 1 + commBytes.length; // encoding + "eng" + \0 (empty short desc) + text
+  framesSize += 10 + commDataSize;
+
+  const totalSize = 10 + framesSize; // ID3 header + frames
+  const buf = new Uint8Array(totalSize);
+  const view = new DataView(buf.buffer);
+
+  // ID3v2.3 header
+  buf[0] = 0x49; buf[1] = 0x44; buf[2] = 0x33; // "ID3"
+  buf[3] = 3; buf[4] = 0; // version 2.3
+  buf[5] = 0; // flags
+  // Size as syncsafe integer (28 bits across 4 bytes, MSB of each byte is 0)
+  const s = framesSize;
+  buf[6] = (s >> 21) & 0x7F;
+  buf[7] = (s >> 14) & 0x7F;
+  buf[8] = (s >> 7) & 0x7F;
+  buf[9] = s & 0x7F;
+
+  let off = 10;
+  // Write text frames
+  for (const frame of builtFrames) {
+    buf.set(enc.encode(frame.id), off); // frame ID (4 bytes)
+    view.setUint32(off + 4, frame.size); // size (big-endian)
+    buf[off + 8] = 0; buf[off + 9] = 0; // flags
+    buf[off + 10] = frame.encoding; // UTF-8
+    buf.set(frame.data, off + 11);
+    off += 10 + frame.size;
+  }
+  // Write COMM frame
+  buf.set(enc.encode('COMM'), off);
+  view.setUint32(off + 4, commDataSize);
+  buf[off + 8] = 0; buf[off + 9] = 0;
+  buf[off + 10] = 3; // UTF-8
+  buf[off + 11] = 0x65; buf[off + 12] = 0x6E; buf[off + 13] = 0x67; // "eng"
+  buf[off + 14] = 0; // empty short description (null terminator)
+  buf.set(commBytes, off + 15);
+
+  return buf;
+}
+
+function downloadMp3(pcm, sampleRate, filename) {
+  // Convert Float32 PCM to Int16
+  const samples = new Int16Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) {
+    samples[i] = Math.max(-32768, Math.min(32767, Math.round(pcm[i] * 32767)));
+  }
+
+  // Encode MP3 using lamejs (mono, 128kbps)
+  const encoder = new lamejs.Mp3Encoder(1, sampleRate, 128);
+  const chunkSize = 1152;
+  const mp3Parts = [];
+  for (let i = 0; i < samples.length; i += chunkSize) {
+    const chunk = samples.subarray(i, Math.min(i + chunkSize, samples.length));
+    const mp3buf = encoder.encodeBuffer(chunk);
+    if (mp3buf.length > 0) mp3Parts.push(mp3buf);
+  }
+  const flush = encoder.flush();
+  if (flush.length > 0) mp3Parts.push(flush);
+
+  // Build ID3v2 tag
+  const id3 = buildId3v2Tag();
+
+  // Concatenate: ID3 tag + MP3 data
+  const blob = new Blob([id3, ...mp3Parts], { type: 'audio/mpeg' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -539,9 +646,13 @@ function downloadWav(pcm, sampleRate, filename) {
 // ─── Replay / Download buttons ─────────────────────────────────────────────
 
 replayBtn.addEventListener('click', () => {
+  if (currentSource) {
+    stopPlayback();
+    return;
+  }
   if (lastPcm) {
     playPcm(lastPcm, lastSampleRate);
-    setStatus(`Replaying ${(lastPcm.length / lastSampleRate).toFixed(1)}s`);
+    setStatus(`Playing ${(lastPcm.length / lastSampleRate).toFixed(1)}s`);
   }
 });
 
@@ -567,8 +678,9 @@ saveGenVoiceBtn.addEventListener('click', async () => {
 
 downloadBtn.addEventListener('click', () => {
   if (lastPcm) {
-    const safeName = (lastText || 'omnivoice').slice(0, 40).replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_') || 'omnivoice';
-    downloadWav(lastPcm, lastSampleRate, `${safeName}.wav`);
+    const words = (lastText || 'vocoloco').slice(0, 50).replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_') || 'vocoloco';
+    const ts = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+    downloadMp3(lastPcm, lastSampleRate, `${words}_${ts}.mp3`);
   }
 });
 
@@ -628,8 +740,9 @@ function renderHistory() {
 
     card.querySelector('[data-action="download"]').addEventListener('click', (e) => {
       e.stopPropagation();
-      const safeName = (item.text || 'omnivoice').slice(0, 40).replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_') || 'omnivoice';
-      downloadWav(item.pcm, item.sampleRate, `${safeName}.wav`);
+      const words = (item.text || 'vocoloco').slice(0, 50).replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_') || 'vocoloco';
+      const ts = new Date(item.timestamp).toISOString().slice(0, 16).replace(/[T:]/g, '-');
+      downloadMp3(item.pcm, item.sampleRate, `${words}_${ts}.mp3`);
     });
 
     // Click card to replay
@@ -668,13 +781,66 @@ async function decodeRefAudio(file) {
 
 // ─── Generate ──────────────────────────────────────────────────────────────
 
+const timeEstimateEl = document.getElementById('time-estimate');
+const generateBtnDefaultClasses = generateBtn.className; // save original classes
+
+// Estimated ms/step based on last generation (updated after each run)
+let msPerStep = null;
+
+function updateTimeEstimate() {
+  if (!timeEstimateEl) return;
+  const text = textEl.value.trim();
+  const steps = parseInt(qualityEl.value);
+  if (!text || !msPerStep) { timeEstimateEl.classList.add('hidden'); return; }
+  const estSec = (steps * msPerStep / 1000).toFixed(0);
+  timeEstimateEl.textContent = `Estimated: ~${estSec}s`;
+  timeEstimateEl.classList.remove('hidden');
+}
+
+function setGenerating(active) {
+  if (active) {
+    // Transform generate button into cancel button
+    generateBtn.className = generateBtnDefaultClasses;
+    generateBtn.classList.add('btn-cancel');
+    generateBtn.textContent = 'Cancel';
+    generateBtn.disabled = false; // must be clickable as cancel
+    generateBtn.onclick = cancelGeneration;
+    timeEstimateEl.classList.add('hidden');
+  } else {
+    // Restore generate button
+    generateBtn.className = generateBtnDefaultClasses;
+    generateBtn.onclick = null; // remove cancel handler, use the addEventListener below
+    generateBtn.disabled = !isReady;
+    updateVoiceBadge(); // restores button text
+  }
+}
+
+function cancelGeneration() {
+  if (!isGenerating) return;
+  ttsWorker.terminate();
+  isGenerating = false;
+  isReady = false; // worker is being recreated
+  setGenerating(false);
+  generateBtn.disabled = true; // disabled until new worker is ready
+  hideProgress();
+  setStatus('Cancelled — reloading...');
+  initWorker();
+}
+
 async function generate() {
   const text = textEl.value.trim();
   if (!text || !isReady || isGenerating) return;
   if (text.length > 500) { setStatus('Text too long (max 500 characters)'); return; }
+
+  // Warn when history is at capacity
+  if (history.length >= MAX_HISTORY) {
+    const proceed = confirm(`You have ${MAX_HISTORY} generations stored. Generating a new one will remove the oldest. Save any you want to keep first.\n\nContinue?`);
+    if (!proceed) return;
+  }
+
   getAudioCtx();
   isGenerating = true;
-  generateBtn.disabled = true;
+  setGenerating(true);
   setStatus('Preparing...');
   showProgress('indeterminate');
 
@@ -840,6 +1006,17 @@ function setStatus(text) {
 }
 
 generateBtn.addEventListener('click', generate);
+
+// Ctrl/Cmd+Enter to generate
+textEl.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    generate();
+  }
+});
+
+// Update time estimate as user types
+textEl.addEventListener('input', updateTimeEstimate);
 textEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -913,7 +1090,7 @@ function renderLibrary() {
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
         <button data-action="replay" style="padding:6px 14px;border-radius:8px;background:#273c38;color:#4ade80;border:1px solid rgba(74,222,128,0.3);font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s;">&#9654; Play</button>
-        <button data-action="download" style="padding:6px 14px;border-radius:8px;background:#1e293b;color:#9ca3af;border:1px solid #2d3748;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s;">&#8595; WAV</button>
+        <button data-action="download" style="padding:6px 14px;border-radius:8px;background:#1e293b;color:#9ca3af;border:1px solid #2d3748;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s;">&#8595; MP3</button>
       </div>
     `;
 
@@ -930,8 +1107,9 @@ function renderLibrary() {
       setStatus(`Replaying ${item.duration.toFixed(1)}s`);
     });
     info.querySelector('[data-action="download"]').addEventListener('click', () => {
-      const safeName = (item.text || 'omnivoice').slice(0, 40).replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_') || 'omnivoice';
-      downloadWav(item.pcm, item.sampleRate, `${safeName}.wav`);
+      const words = (item.text || 'vocoloco').slice(0, 50).replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '_') || 'vocoloco';
+      const ts = new Date(item.timestamp).toISOString().slice(0, 16).replace(/[T:]/g, '-');
+      downloadMp3(item.pcm, item.sampleRate, `${words}_${ts}.mp3`);
     });
 
     // Append to DOM first, then draw (canvas needs real dimensions)
