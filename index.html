@@ -706,9 +706,11 @@
 
   if (warnings.length > 0) {
     const mainEl = document.querySelector('main');
-    const origHTML = mainEl.innerHTML;
-    mainEl.innerHTML = `
-      <div style="text-align:center;padding:60px 24px;">
+    // Hide existing content instead of destroying it (preserves DOM references for app.js)
+    for (const child of mainEl.children) child.style.display = 'none';
+    const warnDiv = document.createElement('div');
+    warnDiv.style.cssText = 'text-align:center;padding:60px 24px;';
+    warnDiv.innerHTML = `
         <div style="font-size:48px;margin-bottom:16px;">&#9888;&#65039;</div>
         <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Performance Warning</h2>
         ${warnings.map(w => `<p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:380px;margin:0 auto 10px;">${w}</p>`).join('')}
@@ -717,11 +719,12 @@
         </p>
         <button id="warn-continue-btn" style="margin-top:8px;padding:10px 28px;border-radius:10px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);color:#f59e0b;font-size:14px;font-weight:600;cursor:pointer;">
           Continue anyway
-        </button>
-      </div>`;
+        </button>`;
+    mainEl.appendChild(warnDiv);
     await new Promise(resolve => {
       document.getElementById('warn-continue-btn').addEventListener('click', () => {
-        mainEl.innerHTML = origHTML;
+        warnDiv.remove();
+        for (const child of mainEl.children) child.style.display = '';
         resolve();
       });
     });

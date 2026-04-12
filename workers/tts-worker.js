@@ -419,17 +419,10 @@ async function init(modelBaseUrl, forceCPU) {
       postMessage({ type: 'progress', stage: 'loading', detail: 'No WebGPU detected — running in CPU mode (slower)' });
     }
 
-    // Init GPU post-processor (separate device, non-blocking)
-    if (hasWorkingGPU) {
-      try {
-        gpuPostProc = new GpuPostProcessor();
-        await gpuPostProc.init();
-        console.log('[init] GPU post-processor ready');
-      } catch (e) {
-        console.warn('[init] GPU post-processor unavailable, using CPU fallback:', e.message);
-        gpuPostProc = null;
-      }
-    }
+    // GPU post-processor uses its own GPUDevice. Only useful when ONNX runs
+    // on WASM (so the GPU is free). When ONNX uses WebGPU, a second device
+    // causes contention that slows model inference by 5-7x.
+    // We defer this decision until after we know the actual ONNX backend.
 
     postMessage({ type: 'progress', stage: 'loading', detail: 'Loading config...' });
     config = await (await fetch(`${modelBaseUrl}/omnivoice-config.json`)).json();
@@ -475,6 +468,19 @@ async function init(modelBaseUrl, forceCPU) {
       actualBackend = 'cpu';
     }
     console.log(`[init] Main model backend: ${actualBackend}, threads: ${ort.env.wasm.numThreads}`);
+
+    // Init GPU post-processor only when ONNX is on WASM (GPU is free).
+    // When ONNX uses WebGPU, a second GPUDevice causes contention.
+    if (actualBackend === 'cpu' && hasWorkingGPU) {
+      try {
+        gpuPostProc = new GpuPostProcessor();
+        await gpuPostProc.init();
+        console.log('[init] GPU post-processor ready (ONNX on WASM, GPU free for post-processing)');
+      } catch (e) {
+        console.warn('[init] GPU post-processor unavailable, using CPU fallback:', e.message);
+        gpuPostProc = null;
+      }
+    }
 
     // Load decoder (use same backend as main model)
     const decEp = actualBackend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
