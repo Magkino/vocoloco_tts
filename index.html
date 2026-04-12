@@ -573,7 +573,7 @@
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px]">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.0.1</button>
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.1.1</button>
   </div>
 
   <!-- Changelog (hidden, opens above footer) -->
@@ -585,6 +585,28 @@
       </div>
       <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
         <div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.1.1</span>
+            <span class="text-[10px] text-omni-text-muted/40">Apr 12, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>Player always visible, no more layout jumps</li>
+            <li>Parallel model loading (faster cached startup)</li>
+            <li>Fixed layout shift on generate/cancel button</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.1.0</span>
+            <span class="text-[10px] text-omni-text-muted/40">Apr 12, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>Redesigned voice cloning with guided tips and countdown</li>
+            <li>Smooth transitions, no more jumping UI elements</li>
+            <li>Version changelog and new-version toast</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
           <div class="flex items-center gap-2 mb-1">
             <span class="text-[11px] font-bold text-omni-neon">v1.0.1</span>
             <span class="text-[10px] text-omni-text-muted/40">Apr 12, 2026</span>
@@ -622,7 +644,8 @@
   });
 
   // Changelog toggle
-  const CURRENT_VERSION = 'v1.0.1';
+  const CURRENT_VERSION = 'v1.1.1';
+  document.getElementById('version-btn').textContent = CURRENT_VERSION;
   document.getElementById('version-btn').addEventListener('click', () => {
     document.getElementById('changelog-panel').classList.toggle('hidden');
   });
