@@ -156,7 +156,6 @@ if (qualityRow) {
       btn.classList.add('active');
       // Sync to hidden select
       qualityEl.value = btn.dataset.val;
-      updateTimeEstimate();
     });
   });
 }
@@ -215,7 +214,6 @@ function updateVoiceUI() {
   } else {
     generateBtn.textContent = 'Generate Speech';
   }
-  updateTimeEstimate();
 }
 
 // Alias for compat
@@ -360,20 +358,11 @@ function initWorker() {
     switch (msg.type) {
       case 'progress':
         setStatus(msg.detail);
-        // Try to parse step progress for bar + track ms/step
-        const stepMatch = msg.detail?.match?.(/Step (\d+)\/(\d+) \((\d+)ms\)/);
+        const stepMatch = msg.detail?.match?.(/(\d+)\s*\/\s*(\d+)/);
         if (stepMatch) {
-          const [, current, total, stepMs] = stepMatch;
-          setProgressPercent((parseInt(current) / parseInt(total)) * 100);
-          msPerStep = parseInt(stepMs);
+          setProgressPercent((parseInt(stepMatch[1]) / parseInt(stepMatch[2])) * 100);
         } else {
-          const genericMatch = msg.detail?.match?.(/(\d+)\s*\/\s*(\d+)/);
-          if (genericMatch) {
-            const [, current, total] = genericMatch;
-            setProgressPercent((parseInt(current) / parseInt(total)) * 100);
-          } else {
-            showProgress('indeterminate');
-          }
+          showProgress('indeterminate');
         }
         break;
       case 'ready':
@@ -411,19 +400,14 @@ function onAudio(pcm, sampleRate) {
   // Add to history
   addToHistory(lastText, lastPcm, lastSampleRate, duration);
 
-  // Show player FIRST, force reflow, then draw waveform
-  const studioPlayer = document.getElementById('studio-player');
-  if (studioPlayer) {
-    studioPlayer.classList.remove('hidden');
-    void studioPlayer.offsetHeight; // reflow so canvas gets real dimensions
-  }
-
   drawWaveform(pcm);
   playerDuration.textContent = duration.toFixed(1) + 's';
 
-  // Play audio and scroll into view
+  // Enable player controls
+  if (playerControls) { playerControls.style.opacity = '1'; playerControls.style.pointerEvents = 'auto'; }
+
+  // Play audio
   playPcm(pcm, sampleRate);
-  if (studioPlayer) studioPlayer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   setStatus(`Playing ${duration.toFixed(1)}s`);
   hideProgress();
@@ -779,21 +763,8 @@ async function decodeRefAudio(file) {
 
 // ─── Generate ──────────────────────────────────────────────────────────────
 
-const timeEstimateEl = document.getElementById('time-estimate');
 const generateBtnDefaultClasses = generateBtn.className; // save original classes
-
-// Estimated ms/step based on last generation (updated after each run)
-let msPerStep = null;
-
-function updateTimeEstimate() {
-  if (!timeEstimateEl) return;
-  const text = textEl.value.trim();
-  const steps = parseInt(qualityEl.value);
-  if (!text || !msPerStep) { timeEstimateEl.classList.add('hidden'); return; }
-  const estSec = (steps * msPerStep / 1000).toFixed(0);
-  timeEstimateEl.textContent = `Estimated: ~${estSec}s`;
-  timeEstimateEl.classList.remove('hidden');
-}
+const playerControls = document.getElementById('player-controls');
 
 function setGenerating(active) {
   if (active) {
@@ -803,7 +774,6 @@ function setGenerating(active) {
     generateBtn.textContent = 'Cancel';
     generateBtn.disabled = false; // must be clickable as cancel
     generateBtn.onclick = cancelGeneration;
-    timeEstimateEl.classList.add('hidden');
   } else {
     // Restore generate button
     generateBtn.className = generateBtnDefaultClasses;
@@ -889,28 +859,29 @@ const cloneClearBtn = document.getElementById('clone-clear-btn');
 const micLabel = document.getElementById('mic-label');
 const recHint = document.getElementById('rec-hint');
 
+function enableCloneSection(el) { el.style.opacity = '1'; el.style.pointerEvents = 'auto'; }
+function disableCloneSection(el) { el.style.opacity = '0.3'; el.style.pointerEvents = 'none'; }
+
 function showCloneAudio(blob) {
   refPreview.src = URL.createObjectURL(blob);
-  // Decode to get trimmed duration and validate
   decodeRefAudio(blob).then(pcm => {
     const dur = pcm.length / 24000;
     cloneDuration.textContent = `${dur.toFixed(1)}s (trimmed)`;
-    // Duration warnings
     if (dur < 3) {
-      cloneDurationWarn.textContent = 'Recording too short — aim for 5-10 seconds for best results.';
-      cloneDurationWarn.classList.remove('hidden');
+      cloneDurationWarn.textContent = 'Recording too short: aim for 5-10 seconds for best results.';
+      cloneDurationWarn.classList.remove('off');
     } else if (dur > 15) {
-      cloneDurationWarn.textContent = 'Recording is long — only the first ~10s improve quality, the rest increases generation time.';
-      cloneDurationWarn.classList.remove('hidden');
+      cloneDurationWarn.textContent = 'Recording is long: only the first ~10s improve quality, the rest increases generation time.';
+      cloneDurationWarn.classList.remove('off');
     } else {
-      cloneDurationWarn.classList.add('hidden');
+      cloneDurationWarn.classList.add('off');
     }
   });
-  // Show audio info, hide tips
-  cloneAudioInfo.classList.remove('hidden');
-  cloneSaveSection.classList.remove('hidden');
-  if (cloneTips) cloneTips.classList.add('hidden');
-  // Auto-focus name input
+  enableCloneSection(cloneAudioInfo);
+  enableCloneSection(cloneSaveSection);
+  if (cloneTips) cloneTips.classList.add('off');
+  saveVoiceNameEl.disabled = false;
+  refTextEl.disabled = false;
   saveVoiceNameEl.focus();
   updateVoiceBadge();
 }
@@ -920,10 +891,11 @@ function clearCloneAudio() {
   refAudioEl.value = '';
   selectedSavedVoice = null;
   refPreview.src = '';
-  cloneAudioInfo.classList.add('hidden');
-  cloneSaveSection.classList.add('hidden');
-  cloneDurationWarn.classList.add('hidden');
-  if (cloneTips) cloneTips.classList.remove('hidden');
+  cloneDuration.textContent = 'No audio';
+  disableCloneSection(cloneAudioInfo);
+  disableCloneSection(cloneSaveSection);
+  cloneDurationWarn.classList.add('off');
+  if (cloneTips) cloneTips.classList.remove('off');
   renderSavedVoices();
   updateVoiceBadge();
 }
@@ -970,14 +942,14 @@ async function startRecording() {
   mediaRecorder.onstop = () => {
     stream.getTracks().forEach(t => t.stop());
     recordedBlob = new Blob(recordedChunks, { type: 'audio/webm' });
-    recInfo.classList.add('hidden');
+    recInfo.classList.add('off');
     micBtn.classList.remove('recording');
     micLabel.textContent = 'Record';
     clearInterval(recTimer);
     showCloneAudio(recordedBlob);
   };
   mediaRecorder.start();
-  recInfo.classList.remove('hidden');
+  recInfo.classList.remove('off');
   micBtn.classList.add('recording');
   micLabel.textContent = 'Recording...';
   if (recHint) recHint.textContent = '';
@@ -1094,8 +1066,6 @@ textEl.addEventListener('keydown', (e) => {
   }
 });
 
-// Update time estimate as user types
-textEl.addEventListener('input', updateTimeEstimate);
 textEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();

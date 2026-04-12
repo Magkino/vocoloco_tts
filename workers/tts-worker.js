@@ -30,12 +30,12 @@ const CACHE_NAME = 'omnivoice-models-v1';
 
 // ─── Fetch with progress + Cache API caching ──────────────────────────────
 
-async function fetchWithProgress(url, onProgress) {
+async function fetchWithProgress(url, onProgress, onCached) {
   const cache = await caches.open(CACHE_NAME);
   const cached = await cache.match(url);
   if (cached) {
     const buf = await cached.arrayBuffer();
-    if (onProgress) onProgress(buf.byteLength, buf.byteLength);
+    if (onCached) onCached(buf.byteLength);
     return buf;
   }
 
@@ -431,21 +431,47 @@ async function init(modelBaseUrl, forceCPU) {
     tokenizer = await AutoTokenizer.from_pretrained('Gigsu/vocoloco-onnx');
     postMessage({ type: 'progress', stage: 'loading', detail: 'Tokenizer loaded.' });
 
-    // Load main model (FP32, sharded)
-    postMessage({ type: 'progress', stage: 'downloading', detail: 'Loading manifest...' });
+    // ── Load all model data (parallel when cached) ─────────────────────────
+    postMessage({ type: 'progress', stage: 'downloading', detail: 'Loading models...' });
     const dataFiles = await (await fetch(`${modelBaseUrl}/omnivoice-main-manifest.json`)).json();
-    const externalData = [];
+
+    // Fetch all model files: shards + decoder + encoder
+    const fetchPromises = [];
     for (let i = 0; i < dataFiles.length; i++) {
       const fname = dataFiles[i];
-      postMessage({ type: 'progress', stage: 'downloading', detail: `Shard ${i + 1}/${dataFiles.length}...` });
-      const buf = await fetchWithProgress(`${modelBaseUrl}/${fname}`, (loaded, total) => {
-        const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '?';
-        postMessage({ type: 'progress', stage: 'downloading', detail: `Shard ${i + 1}/${dataFiles.length}: ${lMB}/${tMB} MB` });
-      });
-      externalData.push({ path: fname, data: buf });
+      fetchPromises.push(fetchWithProgress(`${modelBaseUrl}/${fname}`,
+        (loaded, total) => {
+          const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '?';
+          postMessage({ type: 'progress', stage: 'downloading', detail: `Shard ${i + 1}/${dataFiles.length}: ${lMB}/${tMB} MB` });
+        },
+        () => postMessage({ type: 'progress', stage: 'loading', detail: `Shard ${i + 1}/${dataFiles.length} (cached)` })
+      ));
     }
+    const decPromise = fetchWithProgress(`${modelBaseUrl}/omnivoice-decoder.onnx`,
+      (loaded, total) => {
+        const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '83';
+        postMessage({ type: 'progress', stage: 'downloading', detail: `Decoder: ${lMB}/${tMB} MB` });
+      },
+      () => postMessage({ type: 'progress', stage: 'loading', detail: 'Decoder (cached)' })
+    );
+    const encPromise = fetchWithProgress(`${modelBaseUrl}/omnivoice-encoder-fixed.onnx`,
+      (loaded, total) => {
+        const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '654';
+        postMessage({ type: 'progress', stage: 'downloading', detail: `Encoder: ${lMB}/${tMB} MB` });
+      },
+      () => postMessage({ type: 'progress', stage: 'loading', detail: 'Encoder (cached)' })
+    );
 
-    // Try WebGPU EP first for the main model; fall back to WASM if it fails
+    // Await all downloads/cache reads in parallel
+    const [shardBuffers, decBuf, encBuf] = await Promise.all([
+      Promise.all(fetchPromises),
+      decPromise,
+      encPromise,
+    ]);
+
+    const externalData = dataFiles.map((fname, i) => ({ path: fname, data: shardBuffers[i] }));
+
+    // ── Create ONNX sessions ─────────────────────────────────────────────
     let actualBackend = 'cpu';
     postMessage({ type: 'progress', stage: 'loading', detail: 'Creating model session...' });
     if (hasWorkingGPU) {
@@ -469,8 +495,7 @@ async function init(modelBaseUrl, forceCPU) {
     }
     console.log(`[init] Main model backend: ${actualBackend}, threads: ${ort.env.wasm.numThreads}`);
 
-    // Init GPU post-processor only when ONNX is on WASM (GPU is free).
-    // When ONNX uses WebGPU, a second GPUDevice causes contention.
+    // Init GPU post-processor only when ONNX is on WASM (GPU is free)
     if (actualBackend === 'cpu' && hasWorkingGPU) {
       try {
         gpuPostProc = new GpuPostProcessor();
@@ -482,21 +507,12 @@ async function init(modelBaseUrl, forceCPU) {
       }
     }
 
-    // Load decoder (use same backend as main model)
     const decEp = actualBackend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Loading decoder (~83 MB)...' });
-    const decBuf = await fetchWithProgress(`${modelBaseUrl}/omnivoice-decoder.onnx`, (loaded, total) => {
-      const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '83';
-      postMessage({ type: 'progress', stage: 'downloading', detail: `Decoder: ${lMB}/${tMB} MB` });
-    });
+
+    postMessage({ type: 'progress', stage: 'loading', detail: 'Creating decoder session...' });
     decoderSession = await ort.InferenceSession.create(decBuf, { executionProviders: decEp });
 
-    // Load encoder (for voice cloning)
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Loading encoder (~654 MB)...' });
-    const encBuf = await fetchWithProgress(`${modelBaseUrl}/omnivoice-encoder-fixed.onnx`, (loaded, total) => {
-      const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '654';
-      postMessage({ type: 'progress', stage: 'downloading', detail: `Encoder: ${lMB}/${tMB} MB` });
-    });
+    postMessage({ type: 'progress', stage: 'loading', detail: 'Creating encoder session...' });
     try {
       encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: decEp });
     } catch (e) {

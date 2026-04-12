@@ -88,28 +88,9 @@
   .clone-panel { max-height: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.3s; opacity: 0; }
   .clone-panel.open { max-height: 600px; opacity: 1; }
 
-  /* Smooth reveal for small inline elements */
-  .fade-in-out {
-    transition: opacity 0.25s ease;
-    opacity: 1;
-  }
-  .fade-in-out.hidden {
-    opacity: 0;
-    height: 0; overflow: hidden; margin: 0; padding: 0;
-    pointer-events: none;
-    transition: opacity 0.15s ease, height 0s 0.15s, margin 0s 0.15s, padding 0s 0.15s;
-  }
-
-  /* Player: always occupies space, fades in/out without layout shift */
-  #studio-player {
-    transition: opacity 0.4s ease, transform 0.4s ease;
-    opacity: 1; transform: translateY(0);
-  }
-  #studio-player.hidden {
-    opacity: 0; transform: translateY(8px);
-    pointer-events: none; visibility: hidden; height: 0; overflow: hidden;
-    transition: opacity 0.2s ease, transform 0.2s ease, height 0s 0.2s, visibility 0s 0.2s;
-  }
+  /* Smooth show/hide: element always occupies full space, only fades */
+  .smooth { transition: opacity 0.25s ease; opacity: 1; }
+  .smooth.off { opacity: 0; pointer-events: none; }
 
   /* Clone action buttons — recording state */
   .clone-action-btn.recording {
@@ -163,7 +144,6 @@
     50% { border-color: rgba(239, 68, 68, 0.7); }
   }
 
-  /* (player reveal handled by #studio-player rules above) */
 
   /* History */
   .history-scroll { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x mandatory; }
@@ -331,24 +311,19 @@
         </div>
       </div>
 
-      <!-- Voice badge (used for clone mode only) -->
-      <div class="fade-in-out text-center text-omni-text-muted text-xs hidden" id="voice-badge-text"></div>
-
       <!-- Generate (transforms into Cancel during generation) -->
-      <div class="flex flex-col gap-2">
-        <button id="generate-btn" disabled class="w-full py-4 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-base tracking-wide transition-all hover:shadow-neon-strong hover:scale-[1.01] active:scale-[0.99] disabled:opacity-30 disabled:cursor-default disabled:hover:shadow-none disabled:hover:scale-100">
-          Generate Speech
-        </button>
-        <div id="time-estimate" class="fade-in-out text-center text-omni-text-muted text-xs hidden"></div>
-      </div>
+      <button id="generate-btn" disabled class="w-full py-4 rounded-xl border border-transparent bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-base tracking-wide transition-all hover:shadow-neon-strong hover:scale-[1.01] active:scale-[0.99] disabled:opacity-30 disabled:cursor-default disabled:hover:shadow-none disabled:hover:scale-100">
+        Generate Speech
+      </button>
 
       <!-- Player (appears after generation) -->
-      <div id="studio-player" class="hidden">
+      <!-- Player (always visible, empty state until first generation) -->
+      <div id="studio-player">
         <div class="relative rounded-2xl overflow-hidden border border-omni-border" style="background: linear-gradient(180deg, #0f131a, #080b10);">
           <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-omni-neon/30 to-transparent"></div>
           <canvas id="waveform" class="w-full" style="height:80px; display:block;"></canvas>
           <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-omni-border/30 bg-omni-bg/50">
-            <div class="flex items-center gap-2">
+            <div id="player-controls" class="flex items-center gap-2" style="opacity:0.3; pointer-events:none;">
               <button id="replay-btn" class="py-2 px-4 rounded-lg bg-omni-active-bg text-omni-neon border border-omni-neon/40 shadow-neon font-semibold text-xs transition-all hover:shadow-neon-strong active:scale-95">&#9654; Replay</button>
               <button id="download-btn" class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-white border border-omni-border text-xs font-semibold transition-all active:scale-95">&#8595; MP3</button>
               <button id="save-gen-voice-btn" class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-omni-neon border border-omni-border text-xs font-semibold transition-all hover:border-omni-neon/30 active:scale-95">Save Voice</button>
@@ -369,7 +344,7 @@
           <div class="bg-omni-bg rounded-xl p-4 border border-omni-border/50 flex flex-col gap-4">
 
             <!-- Tips (visible when no audio loaded) -->
-            <div id="clone-tips" class="flex flex-col gap-1.5 text-xs text-omni-text-muted/70">
+            <div id="clone-tips" class="smooth flex flex-col gap-1.5 text-xs text-omni-text-muted/70">
               <p>Speak naturally for <strong class="text-omni-text-muted">5-10 seconds</strong></p>
               <p>Pauses and rhythm in your recording shape the cadence of the cloned voice</p>
               <p>Longer clips increase generation time without improving quality</p>
@@ -388,26 +363,26 @@
               </button>
             </div>
 
-            <!-- Recording indicator (hidden until recording) -->
-            <div class="fade-in-out hidden flex items-center justify-center gap-3 text-sm text-red-400" id="rec-info"
+            <!-- Recording indicator -->
+            <div class="smooth off flex items-center justify-center gap-3 text-sm text-red-400" id="rec-info">
               <span class="rec-dot"></span>
               <span id="rec-time">0s</span>
               <span id="rec-hint" class="text-omni-text-muted/50 text-xs"></span>
               <button type="button" id="stop-btn" class="bg-red-500/20 border border-red-500/40 text-red-400 px-4 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all hover:bg-red-500/30">Stop</button>
             </div>
 
-            <!-- Audio info bar (hidden until audio loaded) -->
-            <div id="clone-audio-info" class="fade-in-out hidden flex items-center gap-3 bg-omni-panel/50 rounded-xl px-3 py-2.5 border border-omni-border/30">
+            <!-- Audio info bar (greyed out until audio loaded) -->
+            <div id="clone-audio-info" class="flex items-center gap-3 bg-omni-panel/50 rounded-xl px-3 py-2.5 border border-omni-border/30 transition-opacity" style="opacity:0.3; pointer-events:none;">
               <audio id="ref-preview" controls class="h-8 flex-1 rounded" style="min-width:0"></audio>
-              <span id="clone-duration" class="text-xs text-omni-text-muted whitespace-nowrap"></span>
+              <span id="clone-duration" class="text-xs text-omni-text-muted whitespace-nowrap">No audio</span>
               <button type="button" id="clone-clear-btn" class="text-xs text-omni-text-muted/50 hover:text-red-400 transition-colors cursor-pointer">&times;</button>
             </div>
 
             <!-- Duration warning -->
-            <div id="clone-duration-warn" class="fade-in-out hidden text-xs text-amber-400/80 text-center"></div>
+            <div id="clone-duration-warn" class="smooth off text-xs text-amber-400/80 text-center">&nbsp;</div>
 
-            <!-- Transcript + Save (hidden until audio loaded) -->
-            <div id="clone-save-section" class="fade-in-out hidden flex flex-col gap-3">
+            <!-- Transcript + Save (greyed out until audio loaded) -->
+            <div id="clone-save-section" class="flex flex-col gap-3 transition-opacity" style="opacity:0.3; pointer-events:none;">
               <div>
                 <input type="text" id="ref-text" placeholder="What exactly is said in the audio? (improves accuracy)" disabled class="w-full bg-omni-bg border border-omni-border rounded-lg px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40"/>
                 <p class="mt-1 text-[10px] text-omni-text-muted/40">Type the exact words spoken in the recording</p>
