@@ -207,19 +207,12 @@ function updateVoiceUI() {
   genderRow.parentElement.querySelector('label').style.opacity = cloning ? '0.3' : '1';
   pitchRow.parentElement.querySelector('label').style.opacity = cloning ? '0.3' : '1';
 
-  // Update badge (only visible in clone mode) and button
+  // Update button text based on voice mode (badge removed, button text is enough)
   if (selectedSavedVoice) {
-    voiceBadgeText.textContent = `Using cloned voice: "${selectedSavedVoice.name}"`;
-    voiceBadgeText.style.color = '#4ade80';
-    voiceBadgeText.classList.remove('hidden');
     generateBtn.textContent = `Generate as "${selectedSavedVoice.name}"`;
   } else if (clonePanelOpen && (recordedBlob || (refAudioEl.files && refAudioEl.files.length > 0))) {
-    voiceBadgeText.textContent = 'Using new cloned voice';
-    voiceBadgeText.style.color = '#4ade80';
-    voiceBadgeText.classList.remove('hidden');
     generateBtn.textContent = 'Generate with Clone';
   } else {
-    voiceBadgeText.classList.add('hidden');
     generateBtn.textContent = 'Generate Speech';
   }
   updateTimeEstimate();
@@ -422,9 +415,7 @@ function onAudio(pcm, sampleRate) {
   const studioPlayer = document.getElementById('studio-player');
   if (studioPlayer) {
     studioPlayer.classList.remove('hidden');
-    studioPlayer.style.display = 'block';
-    // Force layout reflow so canvas gets real dimensions
-    void studioPlayer.offsetHeight;
+    void studioPlayer.offsetHeight; // reflow so canvas gets real dimensions
   }
 
   drawWaveform(pcm);
@@ -776,7 +767,14 @@ async function decodeRefAudio(file) {
   src.buffer = buf;
   src.connect(offline.destination);
   src.start();
-  return (await offline.startRendering()).getChannelData(0);
+  const pcm = (await offline.startRendering()).getChannelData(0);
+
+  // Trim silence from both ends (same logic as postProcessAudio in worker)
+  const thresh = 0.005, margin = Math.floor(24000 * 0.02);
+  let start = 0, end = pcm.length;
+  for (let i = 0; i < pcm.length; i++) if (Math.abs(pcm[i]) > thresh) { start = Math.max(0, i - margin); break; }
+  for (let i = pcm.length - 1; i >= 0; i--) if (Math.abs(pcm[i]) > thresh) { end = Math.min(pcm.length, i + margin); break; }
+  return pcm.slice(start, end);
 }
 
 // ─── Generate ──────────────────────────────────────────────────────────────
@@ -880,10 +878,89 @@ async function generate() {
   ttsWorker.postMessage(msg, transfers);
 }
 
+// ─── Clone panel helpers ──────────────────────────────────────────────────
+
+const cloneTips = document.getElementById('clone-tips');
+const cloneAudioInfo = document.getElementById('clone-audio-info');
+const cloneDuration = document.getElementById('clone-duration');
+const cloneDurationWarn = document.getElementById('clone-duration-warn');
+const cloneSaveSection = document.getElementById('clone-save-section');
+const cloneClearBtn = document.getElementById('clone-clear-btn');
+const micLabel = document.getElementById('mic-label');
+const recHint = document.getElementById('rec-hint');
+
+function showCloneAudio(blob) {
+  refPreview.src = URL.createObjectURL(blob);
+  // Decode to get trimmed duration and validate
+  decodeRefAudio(blob).then(pcm => {
+    const dur = pcm.length / 24000;
+    cloneDuration.textContent = `${dur.toFixed(1)}s (trimmed)`;
+    // Duration warnings
+    if (dur < 3) {
+      cloneDurationWarn.textContent = 'Recording too short — aim for 5-10 seconds for best results.';
+      cloneDurationWarn.classList.remove('hidden');
+    } else if (dur > 15) {
+      cloneDurationWarn.textContent = 'Recording is long — only the first ~10s improve quality, the rest increases generation time.';
+      cloneDurationWarn.classList.remove('hidden');
+    } else {
+      cloneDurationWarn.classList.add('hidden');
+    }
+  });
+  // Show audio info, hide tips
+  cloneAudioInfo.classList.remove('hidden');
+  cloneSaveSection.classList.remove('hidden');
+  if (cloneTips) cloneTips.classList.add('hidden');
+  // Auto-focus name input
+  saveVoiceNameEl.focus();
+  updateVoiceBadge();
+}
+
+function clearCloneAudio() {
+  recordedBlob = null;
+  refAudioEl.value = '';
+  selectedSavedVoice = null;
+  refPreview.src = '';
+  cloneAudioInfo.classList.add('hidden');
+  cloneSaveSection.classList.add('hidden');
+  cloneDurationWarn.classList.add('hidden');
+  if (cloneTips) cloneTips.classList.remove('hidden');
+  renderSavedVoices();
+  updateVoiceBadge();
+}
+
+cloneClearBtn.addEventListener('click', clearCloneAudio);
+
 // ─── Mic recording ─────────────────────────────────────────────────────────
 
+let countdownActive = false;
+
 async function startRecording() {
+  // Get mic permission first (prompt appears immediately)
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+  // 3-second countdown overlay
+  countdownActive = true;
+  micBtn.disabled = true;
+  const panel = document.getElementById('clone-panel');
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(15,19,26,0.92);border-radius:12px;backdrop-filter:blur(4px);';
+  overlay.innerHTML = '<div id="countdown-num" style="font-size:64px;font-weight:800;color:#4ade80;line-height:1;transition:transform 0.15s,opacity 0.15s;">3</div><div style="color:#94a3b8;font-size:13px;margin-top:8px;">Get ready to speak...</div><button id="countdown-cancel" style="margin-top:16px;color:#64748b;font-size:12px;cursor:pointer;background:none;border:none;text-decoration:underline;">Cancel</button>';
+  panel.style.position = 'relative';
+  panel.querySelector('div').appendChild(overlay);
+  const numEl = document.getElementById('countdown-num');
+  document.getElementById('countdown-cancel').addEventListener('click', () => { countdownActive = false; });
+  for (let i = 3; i >= 1; i--) {
+    numEl.textContent = i;
+    numEl.style.transform = 'scale(1.3)'; numEl.style.opacity = '0.5';
+    requestAnimationFrame(() => { numEl.style.transform = 'scale(1)'; numEl.style.opacity = '1'; });
+    await new Promise(r => setTimeout(r, 1000));
+    if (!countdownActive) { overlay.remove(); stream.getTracks().forEach(t => t.stop()); micBtn.disabled = false; return; }
+  }
+  overlay.remove();
+  countdownActive = false;
+  micBtn.disabled = false;
+
+  // Start recording
   recordedChunks = [];
   recordedBlob = null;
   selectedSavedVoice = null;
@@ -893,23 +970,24 @@ async function startRecording() {
   mediaRecorder.onstop = () => {
     stream.getTracks().forEach(t => t.stop());
     recordedBlob = new Blob(recordedChunks, { type: 'audio/webm' });
-    refPreview.src = URL.createObjectURL(recordedBlob);
-    refPreview.style.display = 'block';
-    refAudioEl.value = '';
-    recInfo.style.display = 'none';
+    recInfo.classList.add('hidden');
     micBtn.classList.remove('recording');
+    micLabel.textContent = 'Record';
     clearInterval(recTimer);
-    updateVoiceBadge();
+    showCloneAudio(recordedBlob);
   };
   mediaRecorder.start();
-  recInfo.style.display = 'flex';
+  recInfo.classList.remove('hidden');
   micBtn.classList.add('recording');
+  micLabel.textContent = 'Recording...';
+  if (recHint) recHint.textContent = '';
   let sec = 0;
   recTimeEl.textContent = '0s';
   recTimer = setInterval(() => {
     sec++;
     recTimeEl.textContent = `${sec}s`;
-    if (sec >= 20) stopRecording();
+    if (sec === 10 && recHint) recHint.textContent = 'Optimal length reached';
+    if (sec >= 15) stopRecording();
   }, 1000);
 }
 
@@ -918,6 +996,7 @@ function stopRecording() {
 }
 
 micBtn.addEventListener('click', () => {
+  if (countdownActive) { countdownActive = false; return; }
   if (micBtn.classList.contains('recording')) stopRecording();
   else startRecording();
 });
@@ -925,16 +1004,16 @@ stopBtn.addEventListener('click', stopRecording);
 refAudioEl.addEventListener('change', () => {
   recordedBlob = null;
   selectedSavedVoice = null;
-  refPreview.style.display = 'none';
-  renderSavedVoices();
-  updateVoiceBadge();
+  const file = refAudioEl.files[0];
+  if (file) showCloneAudio(file);
+  else clearCloneAudio();
 });
 
 // ─── Save / load voices ────────────────────────────────────────────────────
 
 saveVoiceBtn.addEventListener('click', async () => {
   const name = saveVoiceNameEl.value.trim();
-  if (!name) return;
+  if (!name) { setStatus('Add a name to save this voice'); saveVoiceNameEl.focus(); return; }
   const refSource = recordedBlob || refAudioEl.files[0];
   if (!refSource) { setStatus('Record or upload audio first'); return; }
   const pcm = await decodeRefAudio(refSource);
@@ -946,18 +1025,18 @@ saveVoiceBtn.addEventListener('click', async () => {
   });
   saveVoiceNameEl.value = '';
   await renderSavedVoices();
-  setStatus('Voice saved');
+  setStatus(`Voice "${name}" saved`);
 
-  // Select the new voice
+  // Select the new voice and close panel
   const voices = await getSavedVoices();
   if (voices.length > 0) {
     const newest = voices[voices.length - 1];
     selectedSavedVoice = newest;
     cloneActive = true;
     cloneToggle.classList.add('on');
-    // Close clone panel
     clonePanelOpen = false;
     clonePanel.classList.remove('open');
+    clearCloneAudio();
     await renderSavedVoices();
     updateVoiceBadge();
   }

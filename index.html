@@ -6,15 +6,15 @@
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
 <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
-<title>VocoLoco — Local Text-to-Speech in Your Browser</title>
+<title>VocoLoco: Local Text-to-Speech in Your Browser</title>
 <meta name="description" content="Free, private text-to-speech that runs entirely in your browser. 600+ languages, voice cloning, WebGPU-accelerated. No server, no API keys.">
-<meta property="og:title" content="VocoLoco — Local Text-to-Speech">
+<meta property="og:title" content="VocoLoco: Local Text-to-Speech">
 <meta property="og:description" content="Free, private text-to-speech that runs entirely in your browser. 600+ languages, voice cloning, WebGPU-accelerated.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://magkino.github.io/vocoloco_tts/">
 <meta property="og:image" content="https://magkino.github.io/vocoloco_tts/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="VocoLoco — Local Text-to-Speech">
+<meta name="twitter:title" content="VocoLoco: Local Text-to-Speech">
 <meta name="twitter:description" content="Free, private text-to-speech that runs entirely in your browser. 600+ languages, voice cloning, WebGPU-accelerated.">
 <meta name="twitter:image" content="https://magkino.github.io/vocoloco_tts/og-image.png">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
@@ -30,7 +30,7 @@
     border: 1px solid rgba(255, 255, 255, 0.05);
   }
   .neon-border {
-    border: 1px solid #4ade80;
+    border: 1px solid transparent;
     box-shadow: 0 0 10px rgba(74, 222, 128, 0.3);
   }
   textarea::-webkit-scrollbar { width: 6px; }
@@ -86,24 +86,41 @@
 
   /* Clone panel */
   .clone-panel { max-height: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.3s; opacity: 0; }
-  .clone-panel.open { max-height: 400px; opacity: 1; }
+  .clone-panel.open { max-height: 600px; opacity: 1; }
 
-  /* Mic button */
-  .mic-btn {
-    width: 44px; height: 44px; border-radius: 50%; background: #1e293b;
-    border: 1px solid #2d3748; color: #9ca3af; font-size: 18px;
-    cursor: pointer; display: flex; align-items: center; justify-content: center;
-    transition: all 0.2s; flex-shrink: 0;
+  /* Smooth reveal for small inline elements */
+  .fade-in-out {
+    transition: opacity 0.25s ease;
+    opacity: 1;
   }
-  .mic-btn:hover { border-color: #ef4444; color: #ef4444; }
-  .mic-btn.recording {
-    background: linear-gradient(180deg, #f04868, #d03050);
-    border-color: #ef4444; color: white;
-    animation: mic-pulse 1.8s ease-in-out infinite;
+  .fade-in-out.hidden {
+    opacity: 0;
+    height: 0; overflow: hidden; margin: 0; padding: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease, height 0s 0.15s, margin 0s 0.15s, padding 0s 0.15s;
   }
-  @keyframes mic-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
-    50% { box-shadow: 0 0 0 12px rgba(239,68,68,0); }
+
+  /* Player: always occupies space, fades in/out without layout shift */
+  #studio-player {
+    transition: opacity 0.4s ease, transform 0.4s ease;
+    opacity: 1; transform: translateY(0);
+  }
+  #studio-player.hidden {
+    opacity: 0; transform: translateY(8px);
+    pointer-events: none; visibility: hidden; height: 0; overflow: hidden;
+    transition: opacity 0.2s ease, transform 0.2s ease, height 0s 0.2s, visibility 0s 0.2s;
+  }
+
+  /* Clone action buttons — recording state */
+  .clone-action-btn.recording {
+    background: linear-gradient(180deg, rgba(239,68,68,0.15), rgba(239,68,68,0.08)) !important;
+    border-color: rgba(239,68,68,0.5) !important;
+    color: #f87171 !important;
+    animation: rec-border-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes rec-border-pulse {
+    0%, 100% { border-color: rgba(239,68,68,0.5); }
+    50% { border-color: rgba(239,68,68,0.9); }
   }
 
   /* Recording info */
@@ -146,9 +163,7 @@
     50% { border-color: rgba(239, 68, 68, 0.7); }
   }
 
-  /* Player reveal */
-  .player-container { transition: opacity 0.4s, transform 0.4s; }
-  .player-container.hidden { opacity: 0; transform: translateY(10px); pointer-events: none; }
+  /* (player reveal handled by #studio-player rules above) */
 
   /* History */
   .history-scroll { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x mandatory; }
@@ -317,14 +332,14 @@
       </div>
 
       <!-- Voice badge (used for clone mode only) -->
-      <div class="text-center text-omni-text-muted text-xs hidden" id="voice-badge-text"></div>
+      <div class="fade-in-out text-center text-omni-text-muted text-xs hidden" id="voice-badge-text"></div>
 
       <!-- Generate (transforms into Cancel during generation) -->
       <div class="flex flex-col gap-2">
         <button id="generate-btn" disabled class="w-full py-4 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-base tracking-wide transition-all hover:shadow-neon-strong hover:scale-[1.01] active:scale-[0.99] disabled:opacity-30 disabled:cursor-default disabled:hover:shadow-none disabled:hover:scale-100">
           Generate Speech
         </button>
-        <div id="time-estimate" class="text-center text-omni-text-muted text-xs hidden"></div>
+        <div id="time-estimate" class="fade-in-out text-center text-omni-text-muted text-xs hidden"></div>
       </div>
 
       <!-- Player (appears after generation) -->
@@ -348,26 +363,61 @@
         <label class="block text-omni-text-muted text-xs uppercase tracking-wider mb-3 font-semibold">Cloned Voices</label>
         <div class="flex flex-wrap gap-2" id="saved-voices"></div>
         <button id="new-clone-btn" class="mt-2 py-2 px-5 rounded-full bg-omni-bg border border-omni-border border-dashed text-gray-400 hover:text-white hover:border-gray-500 font-medium text-sm transition-all">+ Clone a Voice</button>
-        <p class="mt-2 text-omni-text-muted text-xs">Upload or record a 5-10s audio sample to clone any voice.</p>
 
         <!-- Clone panel (expandable) -->
         <div class="clone-panel mt-3" id="clone-panel">
-          <div class="bg-omni-bg rounded-xl p-4 border border-omni-border/50 flex flex-col gap-3">
-            <div class="flex gap-2 items-center">
-              <input type="file" id="ref-audio" accept="audio/*" disabled class="flex-1 text-xs text-omni-text-muted file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border file:border-omni-border file:bg-omni-btn-bg file:text-gray-300 file:text-xs file:cursor-pointer file:font-medium"/>
-              <button type="button" class="mic-btn" id="mic-btn" disabled title="Record">&#x1f3a4;</button>
+          <div class="bg-omni-bg rounded-xl p-4 border border-omni-border/50 flex flex-col gap-4">
+
+            <!-- Tips (visible when no audio loaded) -->
+            <div id="clone-tips" class="flex flex-col gap-1.5 text-xs text-omni-text-muted/70">
+              <p>Speak naturally for <strong class="text-omni-text-muted">5-10 seconds</strong></p>
+              <p>Pauses and rhythm in your recording shape the cadence of the cloned voice</p>
+              <p>Longer clips increase generation time without improving quality</p>
             </div>
-            <div class="flex items-center gap-2 text-xs text-red-400" id="rec-info" style="display:none">
+
+            <!-- Two action buttons -->
+            <div class="flex gap-2">
+              <label id="upload-btn" class="clone-action-btn flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-omni-btn-bg border border-omni-border text-gray-300 hover:text-white hover:border-gray-500 text-sm font-medium transition-all cursor-pointer active:scale-[0.98]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                Upload Audio
+                <input type="file" id="ref-audio" accept="audio/*" disabled class="hidden"/>
+              </label>
+              <button type="button" id="mic-btn" disabled class="clone-action-btn flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-omni-btn-bg border border-omni-border text-gray-300 hover:text-white hover:border-gray-500 text-sm font-medium transition-all cursor-pointer active:scale-[0.98]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                <span id="mic-label">Record</span>
+              </button>
+            </div>
+
+            <!-- Recording indicator (hidden until recording) -->
+            <div class="fade-in-out hidden flex items-center justify-center gap-3 text-sm text-red-400" id="rec-info"
               <span class="rec-dot"></span>
               <span id="rec-time">0s</span>
-              <button type="button" id="stop-btn" class="bg-red-500 text-white px-3 py-1 rounded text-xs font-medium cursor-pointer">Stop</button>
+              <span id="rec-hint" class="text-omni-text-muted/50 text-xs"></span>
+              <button type="button" id="stop-btn" class="bg-red-500/20 border border-red-500/40 text-red-400 px-4 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all hover:bg-red-500/30">Stop</button>
             </div>
-            <audio id="ref-preview" style="display:none" controls class="w-full h-8 rounded"></audio>
-            <input type="text" id="ref-text" placeholder="Transcript of reference audio..." disabled class="w-full bg-omni-bg border border-omni-border rounded-lg px-3 py-2 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/50"/>
-            <div class="flex gap-2">
-              <input type="text" id="save-voice-name" placeholder="Voice name..." disabled class="flex-1 bg-omni-bg border border-omni-border rounded-lg px-3 py-2 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/50"/>
-              <button type="button" id="save-voice-btn" disabled class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-omni-neon border border-omni-border text-sm font-medium transition-all hover:border-omni-neon/50">Save</button>
+
+            <!-- Audio info bar (hidden until audio loaded) -->
+            <div id="clone-audio-info" class="fade-in-out hidden flex items-center gap-3 bg-omni-panel/50 rounded-xl px-3 py-2.5 border border-omni-border/30">
+              <audio id="ref-preview" controls class="h-8 flex-1 rounded" style="min-width:0"></audio>
+              <span id="clone-duration" class="text-xs text-omni-text-muted whitespace-nowrap"></span>
+              <button type="button" id="clone-clear-btn" class="text-xs text-omni-text-muted/50 hover:text-red-400 transition-colors cursor-pointer">&times;</button>
             </div>
+
+            <!-- Duration warning -->
+            <div id="clone-duration-warn" class="fade-in-out hidden text-xs text-amber-400/80 text-center"></div>
+
+            <!-- Transcript + Save (hidden until audio loaded) -->
+            <div id="clone-save-section" class="fade-in-out hidden flex flex-col gap-3">
+              <div>
+                <input type="text" id="ref-text" placeholder="What exactly is said in the audio? (improves accuracy)" disabled class="w-full bg-omni-bg border border-omni-border rounded-lg px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40"/>
+                <p class="mt-1 text-[10px] text-omni-text-muted/40">Type the exact words spoken in the recording</p>
+              </div>
+              <div class="flex gap-2">
+                <input type="text" id="save-voice-name" placeholder="Voice name..." disabled class="flex-1 bg-omni-bg border border-omni-border rounded-lg px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40"/>
+                <button type="button" id="save-voice-btn" disabled class="py-2 px-5 rounded-lg bg-omni-active-bg text-omni-neon border border-omni-neon/30 text-sm font-semibold transition-all hover:shadow-neon active:scale-95">Save</button>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
@@ -541,14 +591,51 @@
   <div class="text-center text-omni-text-muted/60 text-[10px] leading-relaxed max-w-lg px-4">
     <p class="mb-1"><strong class="text-omni-text-muted/80">Disclaimer &amp; Legal Notice</strong></p>
     <p class="mb-2"><strong class="text-omni-text-muted/80">How it works.</strong> All speech synthesis runs locally in your browser. No audio, text, or voice data is uploaded to any server. However, on first use (and after cache clears), the app downloads AI model weights (~2.5&nbsp;GB) from <strong class="text-omni-text-muted/80">Hugging&nbsp;Face</strong> (huggingface.co) and runtime libraries from <strong class="text-omni-text-muted/80">jsDelivr</strong> (cdn.jsdelivr.net). These downloads expose your IP address, browser user-agent, and referrer to those services under their respective privacy policies. Once cached, no further network requests are made during synthesis.</p>
-    <p class="mb-2"><strong class="text-omni-text-muted/80">AI-generated content.</strong> All audio produced by this tool is synthetic speech generated by an AI model (<a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">OmniVoice</a>). Downloaded WAV files contain machine-readable metadata (RIFF LIST&nbsp;INFO) identifying them as AI-generated in accordance with EU&nbsp;AI&nbsp;Act Art.&nbsp;50. Do not remove or alter this metadata.</p>
+    <p class="mb-2"><strong class="text-omni-text-muted/80">AI-generated content.</strong> All audio produced by this tool is synthetic speech generated by an AI model (<a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">OmniVoice</a>). Downloaded MP3 files contain machine-readable metadata (ID3v2) identifying them as AI-generated in accordance with EU&nbsp;AI&nbsp;Act Art.&nbsp;50. Do not remove or alter this metadata.</p>
     <p class="mb-2"><strong class="text-omni-text-muted/80">User obligations under the EU&nbsp;AI&nbsp;Act.</strong> If you publish or distribute audio generated by this tool, you are legally required to disclose its synthetic nature to your audience (Art.&nbsp;50(4)), including audible disclaimers where applicable. Using this tool to impersonate real individuals without their explicit consent, to create deceptive deepfakes, or to strip or circumvent AI content-marking is prohibited and may constitute a violation of the EU&nbsp;AI&nbsp;Act and other applicable law.</p>
     <p class="mb-2"><strong class="text-omni-text-muted/80">No warranty.</strong> This tool is provided as-is, without warranty of any kind, for personal, creative, and research purposes. The developers accept no liability for the content users generate, for any downstream use or misuse, or for the availability, accuracy, or conduct of third-party services (Hugging&nbsp;Face, jsDelivr, GitHub).</p>
     <p><strong class="text-omni-text-muted/80">Third-party services:</strong> <a href="https://huggingface.co/privacy" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">Hugging&nbsp;Face Privacy&nbsp;Policy</a> &middot; <a href="https://www.jsdelivr.com/terms/privacy-policy-jsdelivr-net" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">jsDelivr Privacy&nbsp;Policy</a> &middot; <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">GitHub Privacy&nbsp;Statement</a></p>
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px]">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.0.1</button>
+  </div>
+
+  <!-- Changelog (hidden, opens above footer) -->
+  <div id="changelog-panel" class="hidden w-full max-w-md mt-4">
+    <div class="glass-panel rounded-2xl p-5 border border-omni-border/50 shadow-glass">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-xs font-bold text-white">What's new</h3>
+        <button id="changelog-close" class="text-omni-text-muted hover:text-white text-sm leading-none cursor-pointer">&times;</button>
+      </div>
+      <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
+        <div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.0.1</span>
+            <span class="text-[10px] text-omni-text-muted/40">Apr 12, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>Fix GPU contention causing slowdown on NVIDIA desktops</li>
+            <li>Fix warning screen breaking app when switching views</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.0.0</span>
+            <span class="text-[10px] text-omni-text-muted/40">Apr 12, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>GPU-accelerated post-processing with CPU auto-fallback</li>
+            <li>MP3 export with AI-provenance metadata (EU AI Act Art. 50)</li>
+            <li>CPU/WASM fallback for non-WebGPU browsers</li>
+            <li>Voice cloning, generation library, cancel generation</li>
+          </ul>
+        </div>
+      </div>
+      <div class="mt-3 pt-2 border-t border-omni-border/20 text-center">
+        <a href="https://github.com/Magkino/vocoloco_tts/releases" target="_blank" rel="noopener" class="text-[10px] text-omni-text-muted/40 hover:text-omni-text-muted/60 underline">All releases on GitHub</a>
+      </div>
+    </div>
   </div>
 
 </footer>
@@ -558,6 +645,32 @@
     document.getElementById('donate-modal').classList.toggle('hidden');
     document.getElementById('settings-modal').classList.add('hidden');
   });
+
+  // Changelog toggle
+  const CURRENT_VERSION = 'v1.0.1';
+  document.getElementById('version-btn').addEventListener('click', () => {
+    document.getElementById('changelog-panel').classList.toggle('hidden');
+  });
+  document.getElementById('changelog-close').addEventListener('click', () => {
+    document.getElementById('changelog-panel').classList.add('hidden');
+  });
+
+  // New version toast
+  const lastSeen = localStorage.getItem('vocoloco-version');
+  if (lastSeen && lastSeen !== CURRENT_VERSION) {
+    const toast = document.createElement('div');
+    toast.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:999;background:rgba(26,32,40,0.95);border:1px solid rgba(74,222,128,0.3);border-radius:12px;padding:12px 16px;backdrop-filter:blur(8px);cursor:pointer;transition:opacity 0.3s,transform 0.3s;transform:translateY(10px);opacity:0;';
+    toast.innerHTML = `<div style="font-size:12px;font-weight:600;color:#4ade80;margin-bottom:2px;">Updated to ${CURRENT_VERSION}</div><div style="font-size:11px;color:#94a3b8;">Tap to see what changed</div>`;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.transform = 'translateY(0)'; });
+    toast.addEventListener('click', () => {
+      toast.remove();
+      document.getElementById('changelog-panel').classList.remove('hidden');
+      document.getElementById('changelog-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateY(10px)'; setTimeout(() => toast.remove(), 300); }, 8000);
+  }
+  localStorage.setItem('vocoloco-version', CURRENT_VERSION);
 
 
   function formatBytes(bytes) {
@@ -670,8 +783,7 @@
 (async () => {
   // Block mobile devices outright — even if they report WebGPU support,
   // they cannot practically run a 2.5 GB model.
-  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent)
-    || (navigator.maxTouchPoints > 1 && !window.matchMedia('(pointer:fine)').matches);
+  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
 
   if (isMobile) {
     document.querySelector('main').innerHTML = `

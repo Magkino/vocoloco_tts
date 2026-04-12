@@ -5,7 +5,7 @@
 
 **Text-to-speech that runs entirely in your browser.** No server, no API keys, no data leaves your device.
 
-VocoLoco uses WebGPU and WebAssembly to run a 600M-parameter diffusion TTS model client-side. Type text, pick a voice, and get natural speech — all locally.
+VocoLoco uses WebGPU and WebAssembly to run a 600M-parameter diffusion TTS model client-side. Type text, pick a voice, and get natural speech, all locally.
 
 > **Try it now:** [magkino.github.io/vocoloco_tts](https://magkino.github.io/vocoloco_tts/)
 
@@ -13,14 +13,14 @@ VocoLoco uses WebGPU and WebAssembly to run a 600M-parameter diffusion TTS model
 
 ## Features
 
-- **600+ languages** — multilingual TTS powered by OmniVoice
-- **Voice design** — control gender and pitch with simple toggles
-- **Voice cloning** — upload or record a 5-10s audio sample to clone any voice
-- **Saved voices** — store cloned voices locally in the browser for reuse
-- **Generation library** — replay and download past generations as MP3 with AI-provenance metadata
-- **GPU-accelerated** — WebGPU for model inference, with a custom compute shader for post-processing
-- **CPU fallback** — works without WebGPU via WebAssembly (slower, but functional)
-- **100% private** — all synthesis runs in your browser; no audio or text ever leaves your device
+- **600+ languages**: multilingual TTS powered by OmniVoice
+- **Voice design**: control gender and pitch with simple toggles
+- **Voice cloning**: upload or record a 5-10s audio sample to clone any voice
+- **Saved voices**: store cloned voices locally in the browser for reuse
+- **Generation library**: replay and download past generations as MP3 with AI-provenance metadata
+- **GPU-accelerated**: WebGPU for model inference, with a custom compute shader for post-processing
+- **CPU fallback**: works without WebGPU via WebAssembly (slower, but functional)
+- **100% private**: all synthesis runs in your browser; no audio or text ever leaves your device
 
 ## Requirements
 
@@ -35,19 +35,19 @@ VocoLoco uses WebGPU and WebAssembly to run a 600M-parameter diffusion TTS model
 
 VocoLoco runs [OmniVoice](https://github.com/k2-fsa/OmniVoice), a diffusion-based TTS model, in the browser using [ONNX Runtime Web](https://onnxruntime.ai/). The full pipeline:
 
-1. **Text tokenization** — Qwen2 BPE tokenizer via [transformers.js](https://huggingface.co/docs/transformers.js)
-2. **Iterative masked diffusion** — 8-32 denoising steps with classifier-free guidance
-3. **Post-processing** — log-softmax + CFG fusion + argmax, offloaded to a WebGPU compute shader when available (`workers/gpu-postprocess.js`)
-4. **Audio decoding** — HiggsAudioV2 codec converts tokens to 24kHz PCM
-5. **MP3 export** — client-side encoding with ID3v2 metadata marking audio as AI-generated
+1. **Text tokenization**: Qwen2 BPE tokenizer via [transformers.js](https://huggingface.co/docs/transformers.js)
+2. **Iterative masked diffusion**: 8-32 denoising steps with classifier-free guidance
+3. **Post-processing**: log-softmax + CFG fusion + argmax, offloaded to a WebGPU compute shader when available (`workers/gpu-postprocess.js`)
+4. **Audio decoding**: HiggsAudioV2 codec converts tokens to 24kHz PCM
+5. **MP3 export**: client-side encoding with ID3v2 metadata marking audio as AI-generated
 
 ### Models
 
 | Component | Size | Description |
 |---|---|---|
-| Main model | 2.3 GB (sharded) | Qwen3-0.6B backbone — iterative diffusion transformer |
-| Audio decoder | 83 MB | HiggsAudioV2 — token-to-waveform |
-| Audio encoder | 624 MB | HiggsAudioV2 — waveform-to-token (voice cloning) |
+| Main model | 2.3 GB (sharded) | Qwen3-0.6B backbone, iterative diffusion transformer |
+| Audio decoder | 83 MB | HiggsAudioV2, token-to-waveform |
+| Audio encoder | 624 MB | HiggsAudioV2, waveform-to-token (voice cloning) |
 | Tokenizer | ~2 MB | Qwen2 BPE (loaded via transformers.js) |
 
 Models are hosted on [Hugging Face](https://huggingface.co/Gigsu/vocoloco-onnx) and cached in the browser after first download.
@@ -96,9 +96,9 @@ http://localhost:8080?cpu
 
 VocoLoco implements transparency measures in accordance with EU AI Act Article 50:
 
-- **Machine-readable metadata** — all downloaded MP3 files contain ID3v2 tags identifying the audio as AI-generated synthetic speech
-- **User disclosure** — the app displays legal obligations for users who publish or distribute generated audio
-- **Provenance tracking** — metadata includes software identification, creation timestamps, and an AI-generation disclaimer
+- **Machine-readable metadata**: all downloaded MP3 files contain ID3v2 tags identifying the audio as AI-generated synthetic speech
+- **User disclosure**: the app displays legal obligations for users who publish or distribute generated audio
+- **Provenance tracking**: metadata includes software identification, creation timestamps, and an AI-generation disclaimer
 
 See the in-app disclaimer for full details.
 
@@ -116,8 +116,8 @@ Once models are cached, no network requests are made during synthesis.
 
 ## License
 
-- **VocoLoco app** — [Apache License 2.0](LICENSE)
-- **ONNX models** — Apache 2.0, derived from [OmniVoice](https://github.com/k2-fsa/OmniVoice) by Xiaomi/k2-fsa
+- **VocoLoco app**: [Apache License 2.0](LICENSE)
+- **ONNX models**: Apache 2.0, derived from [OmniVoice](https://github.com/k2-fsa/OmniVoice) by Xiaomi/k2-fsa
 
 ## Attribution
 
