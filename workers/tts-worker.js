@@ -24,6 +24,29 @@ let tokenizer = null;
 let config = null;
 let gpuPostProc = null;
 
+// ─── Cancellation ───────────────────────────────────────────────────────────
+// Job-scoped: each synthesize message snapshots the cancel counter when it
+// ARRIVES (not when it starts), so a cancel posted while the job sits behind
+// a queued encode still applies to it.
+
+let cancelCounter = 0;
+let activeCancelBaseline = 0;
+let activeJobId = null;
+
+function isCancelRequested() { return cancelCounter > activeCancelBaseline; }
+
+class CancelledError extends Error {}
+
+// Force a macrotask turn so an incoming 'cancel' message can be delivered
+// between diffusion steps even on the WASM backend (whose session.run promise
+// may resolve without yielding to the event loop).
+const _yieldChannel = new MessageChannel();
+let _yieldResolve = null;
+_yieldChannel.port1.onmessage = () => { const r = _yieldResolve; _yieldResolve = null; if (r) r(); };
+function yieldMacrotask() {
+  return new Promise(res => { _yieldResolve = res; _yieldChannel.port2.postMessage(0); });
+}
+
 // ─── Cache API ─────────────────────────────────────────────────────────────
 
 const CACHE_NAME = 'omnivoice-models-v1';
@@ -288,6 +311,9 @@ async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layer
 
   let totalInferenceMs = 0, totalModelMs = 0, totalGpuPPMs = 0;
   for (let step = 0; step < numStep; step++) {
+    // Let a pending 'cancel' message land, then honor it between steps
+    await yieldMacrotask();
+    if (isCancelRequested()) throw new CancelledError('cancelled');
     const k = sched[step];
     if (k <= 0) continue;
     const stepT0 = performance.now();
@@ -369,7 +395,11 @@ async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layer
 
     const stepMs = performance.now() - stepT0;
     totalInferenceMs += stepMs;
-    postMessage({ type: 'progress', stage: 'generating', detail: `Step ${step + 1}/${numStep} (${stepMs.toFixed(0)}ms)` });
+    postMessage({
+      type: 'progress', stage: 'generating', jobId: activeJobId,
+      step: step + 1, numStep, stepMs: Math.round(stepMs),
+      detail: `Step ${step + 1}/${numStep} (${stepMs.toFixed(0)}ms)`,
+    });
   }
   const jsMs = totalInferenceMs - totalModelMs;
   const ppLabel = gpuPostProc ? 'GPU-PP' : 'CPU-PP';
@@ -388,7 +418,7 @@ async function decodeTokens(tokens, C, T) {
   return r.audio_values.data;
 }
 
-function postProcessAudio(pcm, sr) {
+function postProcessAudio(pcm, sr, normalize = true) {
   const thresh = 0.005, margin = Math.floor(sr * 0.02);
   let start = 0, end = pcm.length;
   for (let i = 0; i < pcm.length; i++) if (Math.abs(pcm[i]) > thresh) { start = Math.max(0, i - margin); break; }
@@ -396,8 +426,12 @@ function postProcessAudio(pcm, sr) {
   const out = pcm.slice(start, end);
   let peak = 0;
   for (let i = 0; i < out.length; i++) { const a = Math.abs(out[i]); if (a > peak) peak = a; }
-  if (peak > 1e-6) { const s = 0.5 / peak; for (let i = 0; i < out.length; i++) out[i] *= s; }
-  return out;
+  if (normalize && peak > 1e-6) {
+    const s = 0.5 / peak;
+    for (let i = 0; i < out.length; i++) out[i] *= s;
+    peak = 0.5;
+  }
+  return { pcm: out, peak };
 }
 
 // ─── Init ───────────────────────────────────────────────────────────────────
@@ -424,15 +458,13 @@ async function init(modelBaseUrl, forceCPU) {
     // causes contention that slows model inference by 5-7x.
     // We defer this decision until after we know the actual ONNX backend.
 
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Loading config...' });
+    postMessage({ type: 'progress', stage: 'loading', phase: 'config', detail: 'Loading config...' });
     config = await (await fetch(`${modelBaseUrl}/omnivoice-config.json`)).json();
 
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Loading tokenizer (Qwen2 BPE)...' });
+    postMessage({ type: 'progress', stage: 'loading', phase: 'tokenizer', detail: 'Loading tokenizer (Qwen2 BPE)...' });
     tokenizer = await AutoTokenizer.from_pretrained('Gigsu/vocoloco-onnx');
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Tokenizer loaded.' });
 
     // ── Load model data ────────────────────────────────────────────────────
-    postMessage({ type: 'progress', stage: 'downloading', detail: 'Loading models...' });
     const dataFiles = await (await fetch(`${modelBaseUrl}/omnivoice-main-manifest.json`)).json();
 
     // Check if all models are cached
@@ -444,44 +476,89 @@ async function init(modelBaseUrl, forceCPU) {
     ];
     const cacheChecks = await Promise.all(allUrls.map(u => cache.match(u)));
     const allCached = cacheChecks.every(Boolean);
+    const uncachedCount = cacheChecks.filter(c => !c).length;
+
+    // Byte-accurate download plan: cached sizes come from the stored
+    // Content-Length header, uncached sizes from a HEAD pre-pass (Hugging Face
+    // exposes Content-Length / X-Linked-Size through CORS). Any failure falls
+    // back to file-count progress (totalBytes = null).
+    let cachedBytes = 0;
+    let totalBytes = null;
+    try {
+      const sizes = await Promise.all(allUrls.map(async (u, i) => {
+        const hit = cacheChecks[i];
+        if (hit) {
+          const n = parseInt(hit.headers.get('Content-Length') || '0', 10);
+          cachedBytes += n;
+          return n;
+        }
+        const head = await fetch(u, { method: 'HEAD' });
+        return parseInt(head.headers.get('Content-Length') || head.headers.get('X-Linked-Size') || '0', 10);
+      }));
+      if (sizes.every(n => n > 0)) totalBytes = sizes.reduce((a, b) => a + b, 0);
+    } catch { totalBytes = null; }
+
+    postMessage({
+      type: 'plan',
+      firstRun: uncachedCount === allUrls.length,
+      resuming: uncachedCount > 0 && uncachedCount < allUrls.length,
+      totalBytes, cachedBytes,
+      fileCount: allUrls.length, filesToDownload: uncachedCount,
+    });
 
     let shardBuffers, decBuf, encBuf;
 
     if (allCached) {
       // All cached: load in parallel (fast)
-      postMessage({ type: 'progress', stage: 'loading', detail: 'Loading from cache...' });
+      postMessage({ type: 'progress', stage: 'loading', phase: 'cache-load', detail: 'Loading from cache...' });
       const results = await Promise.all(allUrls.map(u => fetchWithProgress(u, null, null)));
       shardBuffers = results.slice(0, dataFiles.length);
       decBuf = results[dataFiles.length];
       encBuf = results[dataFiles.length + 1];
     } else {
-      // Not cached: download sequentially with progress
-      shardBuffers = [];
-      for (let i = 0; i < dataFiles.length; i++) {
-        const fname = dataFiles[i];
-        postMessage({ type: 'progress', stage: 'downloading', detail: `Shard ${i + 1}/${dataFiles.length}...` });
-        shardBuffers.push(await fetchWithProgress(`${modelBaseUrl}/${fname}`, (loaded, total) => {
+      // Not (fully) cached: download sequentially with byte-accurate progress
+      let loadedBytes = cachedBytes;
+      let lastPost = 0;
+      const postDownload = (extra, fileIndex, fname, detail, force = false) => {
+        const now = performance.now();
+        if (!force && now - lastPost < 150) return;
+        lastPost = now;
+        postMessage({
+          type: 'progress', stage: 'downloading',
+          loadedBytes: loadedBytes + extra, totalBytes,
+          fileIndex, fileCount: allUrls.length, file: fname,
+          detail,
+        });
+      };
+      const results = [];
+      for (let i = 0; i < allUrls.length; i++) {
+        const url = allUrls[i];
+        const wasCached = !!cacheChecks[i];
+        const fname = url.split('/').pop();
+        const label = i < dataFiles.length
+          ? `Shard ${i + 1}/${dataFiles.length}`
+          : (i === dataFiles.length ? 'Decoder' : 'Encoder');
+        if (!wasCached) postDownload(0, i + 1, fname, `${label}...`, true);
+        const buf = await fetchWithProgress(url, (loaded, total) => {
           const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '?';
-          postMessage({ type: 'progress', stage: 'downloading', detail: `Shard ${i + 1}/${dataFiles.length}: ${lMB}/${tMB} MB` });
-        }));
+          postDownload(loaded, i + 1, fname, `${label}: ${lMB}/${tMB} MB`);
+        }, null);
+        if (!wasCached) {
+          loadedBytes += buf.byteLength;
+          postDownload(0, i + 1, fname, `${label} complete`, true);
+        }
+        results.push(buf);
       }
-      postMessage({ type: 'progress', stage: 'downloading', detail: 'Downloading decoder...' });
-      decBuf = await fetchWithProgress(`${modelBaseUrl}/omnivoice-decoder.onnx`, (loaded, total) => {
-        const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '83';
-        postMessage({ type: 'progress', stage: 'downloading', detail: `Decoder: ${lMB}/${tMB} MB` });
-      });
-      postMessage({ type: 'progress', stage: 'downloading', detail: 'Downloading encoder...' });
-      encBuf = await fetchWithProgress(`${modelBaseUrl}/omnivoice-encoder-fixed.onnx`, (loaded, total) => {
-        const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '654';
-        postMessage({ type: 'progress', stage: 'downloading', detail: `Encoder: ${lMB}/${tMB} MB` });
-      });
+      shardBuffers = results.slice(0, dataFiles.length);
+      decBuf = results[dataFiles.length];
+      encBuf = results[dataFiles.length + 1];
     }
 
     const externalData = dataFiles.map((fname, i) => ({ path: fname, data: shardBuffers[i] }));
 
     // ── Create ONNX sessions ─────────────────────────────────────────────
     let actualBackend = 'cpu';
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Creating model session...' });
+    postMessage({ type: 'progress', stage: 'loading', phase: 'session-main', detail: 'Creating model session...' });
     if (hasWorkingGPU) {
       try {
         mainSession = await ort.InferenceSession.create(
@@ -517,19 +594,27 @@ async function init(modelBaseUrl, forceCPU) {
 
     const decEp = actualBackend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
 
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Creating decoder session...' });
+    postMessage({ type: 'progress', stage: 'loading', phase: 'session-decoder', detail: 'Creating decoder session...' });
     decoderSession = await ort.InferenceSession.create(decBuf, { executionProviders: decEp });
 
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Creating encoder session...' });
+    // Encoder failure is non-fatal: cloning via cached tokens still works,
+    // only encoding NEW reference audio is unavailable.
+    postMessage({ type: 'progress', stage: 'loading', phase: 'session-encoder', detail: 'Creating encoder session...' });
     try {
-      encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: decEp });
+      try {
+        encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: decEp });
+      } catch (e) {
+        console.warn('Encoder WebGPU failed, falling back to WASM:', e.message);
+        encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: ['wasm'] });
+      }
     } catch (e) {
-      console.warn('Encoder WebGPU failed, falling back to WASM:', e.message);
-      encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: ['wasm'] });
+      console.warn('[init] Encoder unavailable on this device:', e.message);
+      encoderSession = null;
+      postMessage({ type: 'progress', stage: 'warning', detail: 'Voice encoder could not load — creating new cloned voices is limited on this device' });
     }
 
     // Warm up all sessions with dummy data to compile GPU shaders
-    postMessage({ type: 'progress', stage: 'loading', detail: 'Warming up...' });
+    postMessage({ type: 'progress', stage: 'loading', phase: 'warmup', detail: 'Warming up...' });
     try {
       const dummyIds = new BigInt64Array(2 * 8 * 4).fill(1024n);
       const dummyMask = new Uint8Array(2 * 4);
@@ -541,13 +626,63 @@ async function init(modelBaseUrl, forceCPU) {
       });
       const dummyCodes = new BigInt64Array(8 * 2).fill(0n);
       await decoderSession.run({ audio_codes: new ort.Tensor('int64', dummyCodes, [1, 8, 2]) });
-      const dummyAudio = new Float32Array(960);
-      await encoderSession.run({ input_values: new ort.Tensor('float32', dummyAudio, [1, 1, 960]) });
+      if (encoderSession) {
+        const dummyAudio = new Float32Array(960);
+        await encoderSession.run({ input_values: new ort.Tensor('float32', dummyAudio, [1, 1, 960]) });
+      }
     } catch (e) { /* warm-up errors are non-fatal */ }
 
-    postMessage({ type: 'ready', backend: actualBackend });
+    postMessage({ type: 'ready', backend: actualBackend, encoderAvailable: !!encoderSession });
   } catch (err) {
     postMessage({ type: 'error', message: `Init failed: ${err.message}` });
+  }
+}
+
+// ─── Reference audio encoding ───────────────────────────────────────────────
+
+// Runs the ~654 MB encoder over 24 kHz mono PCM and returns the audio tokens
+// as a flat Int32Array [C*T] (codebook-major — same layout as the ONNX output).
+async function encodeRefPcm(refAudio) {
+  const pcmF32 = new Float32Array(refAudio);
+  // Clip to hop_length alignment (hop=960 for 24kHz)
+  const hopLength = 960;
+  const clipLen = pcmF32.length - (pcmF32.length % hopLength);
+  const aligned = pcmF32.slice(0, clipLen);
+  const inputTensor = new ort.Tensor('float32', aligned, [1, 1, aligned.length]);
+  const encResult = await encoderSession.run({ input_values: inputTensor });
+  const codesData = encResult.audio_codes.data; // BigInt64Array
+  const codeDims = encResult.audio_codes.dims; // [1, C, T]
+  const C = Number(codeDims[1]);
+  const tokenCount = Number(codeDims[2]);
+  const tokens = new Int32Array(C * tokenCount);
+  for (let i = 0; i < tokens.length; i++) tokens[i] = Number(codesData[i]);
+  return { tokens, tokenCount, numCodebooks: C, duration: aligned.length / config.sampling_rate };
+}
+
+// Expand a flat Int32Array [C*T] into the nested [C][T] number arrays that
+// prepareInferenceInputs consumes.
+function expandTokens(flat, C) {
+  const T = Math.floor(flat.length / C);
+  const out = [];
+  for (let c = 0; c < C; c++) {
+    const row = new Array(T);
+    for (let t = 0; t < T; t++) row[t] = flat[c * T + t];
+    out.push(row);
+  }
+  return out;
+}
+
+async function encodeReference({ requestId, refAudio }) {
+  if (!encoderSession) {
+    postMessage({ type: 'encode-error', requestId, code: 'encoder-unavailable', message: 'Voice encoder not available on this device' });
+    return;
+  }
+  try {
+    postMessage({ type: 'progress', stage: 'encoding', detail: 'Analyzing voice...' });
+    const r = await encodeRefPcm(refAudio);
+    postMessage({ type: 'encoded', requestId, tokens: r.tokens, tokenCount: r.tokenCount, numCodebooks: r.numCodebooks, duration: r.duration }, [r.tokens.buffer]);
+  } catch (err) {
+    postMessage({ type: 'encode-error', requestId, code: 'encode-failed', message: err.message });
   }
 }
 
@@ -555,70 +690,105 @@ async function init(modelBaseUrl, forceCPU) {
 
 async function synthesize(params) {
   const {
-    text, lang = null, refAudio = null, refText = null, instruct = null,
+    jobId = null,
+    text, lang = null, refAudio = null, refText = null, refTokens = null,
+    instruct = null,
     numStep = 20, guidanceScale = 4.0, tShift = 0.05, speed = 1.0,
     seed = null,
+    returnTokens = false, normalize = true,
   } = params;
 
   try {
     // Use seeded PRNG for deterministic output when seed is provided
     rng = seed != null ? mulberry32(seed) : Math.random;
-    // Encode reference audio for voice cloning if provided
+    const C = config.num_audio_codebook;
+
+    // Resolve reference tokens for voice cloning:
+    // 1. pre-encoded tokens (cached voice / chunk chaining) — no encoder needed
+    // 2. raw PCM + encoder
+    // 3. raw PCM without encoder — warn and proceed uncloned
     let refAudioTokens = null;
-    let refDuration = null;
-    if (refAudio && !encoderSession) {
+    if (refTokens && refTokens.length >= C) {
+      refAudioTokens = expandTokens(refTokens, C);
+      postMessage({ type: 'progress', stage: 'encoding', detail: `Using cached voice (${refAudioTokens[0].length} tokens)` });
+    } else if (refAudio && encoderSession) {
+      postMessage({ type: 'progress', stage: 'encoding', detail: 'Encoding reference audio...' });
+      const enc = await encodeRefPcm(refAudio);
+      refAudioTokens = expandTokens(enc.tokens, enc.numCodebooks);
+      postMessage({ type: 'progress', stage: 'encoding', detail: `Encoded: ${enc.tokenCount} tokens (${enc.duration.toFixed(1)}s)` });
+    } else if (refAudio && !encoderSession) {
       postMessage({ type: 'progress', stage: 'warning', detail: 'Voice cloning unavailable on this device (not enough memory for encoder)' });
     }
-    if (refAudio && encoderSession) {
-      postMessage({ type: 'progress', stage: 'encoding', detail: 'Encoding reference audio...' });
-      const pcmF32 = new Float32Array(refAudio);
-      // Clip to hop_length alignment (hop=960 for 24kHz)
-      const hopLength = 960;
-      const clipLen = pcmF32.length - (pcmF32.length % hopLength);
-      const aligned = pcmF32.slice(0, clipLen);
-      const inputTensor = new ort.Tensor('float32', aligned, [1, 1, aligned.length]);
-      const encResult = await encoderSession.run({ input_values: inputTensor });
-      const codesData = encResult.audio_codes.data; // BigInt64Array
-      const codeDims = encResult.audio_codes.dims; // [1, 8, T]
-      const T = Number(codeDims[2]);
-      // Reshape to array of arrays [8][T]
-      refAudioTokens = [];
-      for (let c = 0; c < 8; c++) {
-        const row = [];
-        for (let t = 0; t < T; t++) row.push(Number(codesData[c * T + t]));
-        refAudioTokens.push(row);
-      }
-      refDuration = aligned.length / config.sampling_rate;
-      postMessage({ type: 'progress', stage: 'encoding', detail: `Encoded: ${T} tokens (${refDuration.toFixed(1)}s)` });
-    }
 
-    // Duration estimation
-    const estRefText = refText || 'Nice to meet you.';
-    const estRefTokens = refAudioTokens ? refAudioTokens[0].length : 25;
-    let numTargetTokens = estimateTargetTokens(text, estRefText, estRefTokens, speed);
+    // Duration estimation — the (refText, refTokens) pair must stay consistent:
+    // mixing a real token count with the default text (or vice versa) skews the
+    // estimate ~10x. estimateTargetTokens falls back to its internal defaults
+    // whenever either half is missing.
+    const estRefText = refAudioTokens ? refText : null;
+    const estRefTokens = refAudioTokens ? refAudioTokens[0].length : null;
+    let numTargetTokens = Math.min(estimateTargetTokens(text, estRefText, estRefTokens, speed), 700);
 
     postMessage({ type: 'progress', stage: 'preparing', detail: `Target: ${numTargetTokens} tokens` });
 
     const inputs = await prepareInferenceInputs(text, numTargetTokens, tokenizer, config, {
-      lang, instruct, refText, refAudioTokens,
+      lang, instruct, refText: refAudioTokens ? refText : null, refAudioTokens,
       denoise: true,
     });
 
     const tokens = await generateIterative(inputs, config, numStep, guidanceScale, tShift);
-    const rawPcm = await decodeTokens(tokens, config.num_audio_codebook, numTargetTokens);
+
+    if (isCancelRequested()) throw new CancelledError('cancelled');
+    const rawPcm = await decodeTokens(tokens, C, numTargetTokens);
 
     postMessage({ type: 'progress', stage: 'postprocessing', detail: 'Processing audio...' });
-    const pcm = postProcessAudio(rawPcm, config.sampling_rate);
-    postMessage({ type: 'audio', pcm, sampleRate: config.sampling_rate }, [pcm.buffer]);
+    const { pcm, peak } = postProcessAudio(rawPcm, config.sampling_rate, normalize);
+
+    const reply = { type: 'audio', jobId, pcm, sampleRate: config.sampling_rate, peak };
+    const transfers = [pcm.buffer];
+    if (returnTokens) {
+      // Generated tokens are already valid reference-audio tokens — expose them
+      // flat so the app can chain them as the voice reference for later chunks.
+      const flat = new Int32Array(tokens.length);
+      for (let i = 0; i < tokens.length; i++) flat[i] = Number(tokens[i]);
+      reply.tokens = flat;
+      reply.tokenCount = numTargetTokens;
+      transfers.push(flat.buffer);
+    }
+    postMessage(reply, transfers);
   } catch (err) {
-    postMessage({ type: 'error', message: `Synthesis failed: ${err.message}\n${err.stack}` });
+    if (err instanceof CancelledError) {
+      postMessage({ type: 'cancelled', jobId });
+      return;
+    }
+    postMessage({ type: 'error', jobId, message: `Synthesis failed: ${err.message}\n${err.stack}` });
   }
 }
 
 // ─── Message handler ────────────────────────────────────────────────────────
+// 'cancel' is handled synchronously (never queued) so it can interrupt a
+// running synthesis; everything else is serialized through a job queue since
+// the pipeline shares mutable module-level buffers.
 
-self.onmessage = async (e) => {
+let jobQueue = Promise.resolve();
+
+async function handleMessage(msg) {
+  if (msg.type === 'init') {
+    await init(msg.modelBaseUrl, msg.forceCPU);
+  } else if (msg.type === 'synthesize') {
+    activeJobId = msg.jobId ?? null;
+    activeCancelBaseline = msg._cancelBaseline ?? cancelCounter;
+    await synthesize(msg);
+    activeJobId = null;
+  } else if (msg.type === 'encode-reference') {
+    await encodeReference(msg);
+  }
+}
+
+self.onmessage = (e) => {
   const msg = e.data;
-  if (msg.type === 'init') await init(msg.modelBaseUrl, msg.forceCPU);
-  else if (msg.type === 'synthesize') await synthesize(msg);
+  if (msg.type === 'cancel') { cancelCounter++; return; }
+  // Snapshot the cancel counter at arrival so a cancel that lands while this
+  // job is still queued (e.g. behind an encode) is honored when it runs.
+  if (msg.type === 'synthesize') msg._cancelBaseline = cancelCounter;
+  jobQueue = jobQueue.then(() => handleMessage(msg)).catch((err) => console.error('[worker] job failed:', err));
 };

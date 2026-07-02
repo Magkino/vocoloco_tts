@@ -77,39 +77,16 @@
     border-color: #4ade80;
     box-shadow: 0 0 10px rgba(74, 222, 128, 0.2);
   }
-  .saved-voice .del {
-    display: none; font-size: 14px; color: #6b7280; background: none;
-    border: none; cursor: pointer; padding: 0 2px; line-height: 1;
-  }
-  .saved-voice.active .del { display: inline; }
-  .saved-voice .del:hover { color: #ef4444; }
-
-  /* Clone panel */
-  .clone-panel { max-height: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.3s; opacity: 0; }
-  .clone-panel.open { max-height: 600px; opacity: 1; }
-
-  /* Smooth show/hide: element always occupies full space, only fades */
-  .smooth { transition: opacity 0.25s ease; opacity: 1; }
-  .smooth.off { opacity: 0; pointer-events: none; }
 
   /* Changelog fade-in */
   @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   .changelog-reveal { animation: fadeSlideIn 0.3s ease; }
 
-  /* Clone action buttons — recording state */
-  .clone-action-btn.recording {
-    background: linear-gradient(180deg, rgba(239,68,68,0.15), rgba(239,68,68,0.08)) !important;
-    border-color: rgba(239,68,68,0.5) !important;
-    color: #f87171 !important;
-    animation: rec-border-pulse 1.8s ease-in-out infinite;
-  }
   @keyframes rec-border-pulse {
     0%, 100% { border-color: rgba(239,68,68,0.5); }
     50% { border-color: rgba(239,68,68,0.9); }
   }
 
-  /* Recording info */
-  .rec-dot { width: 7px; height: 7px; border-radius: 50%; background: #ef4444; animation: blink 1s step-end infinite; }
   @keyframes blink { 50% { opacity: 0; } }
 
   /* Progress bar */
@@ -148,23 +125,6 @@
     50% { border-color: rgba(239, 68, 68, 0.7); }
   }
 
-
-  /* History */
-  .history-scroll { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x mandatory; }
-  .history-scroll::-webkit-scrollbar { height: 4px; }
-  .history-scroll::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 4px; }
-  .history-card {
-    flex-shrink: 0; width: 200px; scroll-snap-align: start;
-    background: rgba(26, 32, 40, 0.7); backdrop-filter: blur(8px);
-    border: 1px solid #2d3748; border-radius: 14px;
-    padding: 10px; cursor: pointer; transition: all 0.2s;
-    position: relative; overflow: hidden;
-  }
-  .history-card::before {
-    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(74,222,128,0.2), transparent);
-  }
-  .history-card:hover { border-color: rgba(74,222,128,0.4); transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 12px rgba(74,222,128,0.1); }
 
   /* Sidebar tab states */
   .sidebar-tab.active-tab {
@@ -206,6 +166,237 @@
     color: #94a3b8; background: transparent;
   }
   .mobile-tab.active-tab { background: #273c38; color: #4ade80; }
+
+  /* ── Focus visibility (keyboard users) ─────────────────────────────── */
+  :where(button, [role="radio"], [role="tab"], [role="slider"], [role="button"], a, input, textarea, select):focus-visible {
+    outline: 2px solid rgba(74, 222, 128, 0.7);
+    outline-offset: 2px;
+  }
+  #text-input:focus-visible { outline: 2px solid rgba(74, 222, 128, 0.4); outline-offset: -2px; border-radius: 8px; }
+  .app-view:focus { outline: none; }
+
+  /* Char counter warning */
+  .char-count-warn { color: #f59e0b !important; }
+
+  /* ── Player: playhead + buffering chip ─────────────────────────────── */
+  #playhead {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 2px;
+    background: #4ade80; box-shadow: 0 0 8px rgba(74, 222, 128, 0.8);
+    pointer-events: none; will-change: transform;
+  }
+  #playhead.hidden { display: none; }
+  #buffering-chip {
+    position: absolute; top: 8px; right: 8px; font-size: 10px; font-weight: 600;
+    padding: 2px 8px; border-radius: 9999px; background: rgba(26, 32, 40, 0.9);
+    border: 1px solid rgba(74, 222, 128, 0.35); color: #4ade80;
+    animation: cancel-pulse 1.4s ease-in-out infinite;
+  }
+  #buffering-chip.hidden { display: none; }
+  #voice-lock-btn.locked {
+    background: #273c38 !important; color: #4ade80 !important;
+    border-color: rgba(74, 222, 128, 0.5) !important;
+    box-shadow: 0 0 10px rgba(74, 222, 128, 0.2);
+  }
+
+  /* ── Loading overlay: byte progress ────────────────────────────────── */
+  #loading-track {
+    width: min(320px, 80%); height: 6px; border-radius: 9999px;
+    background: #2d3748; overflow: hidden;
+  }
+  #loading-track.hidden { display: none; }
+  #loading-fill {
+    height: 100%; width: 0%; border-radius: 9999px;
+    background: linear-gradient(90deg, #4ade80, #22c55e);
+    box-shadow: 0 0 12px rgba(74, 222, 128, 0.6);
+    transition: width 0.2s;
+  }
+
+  /* ── Dialogs & toasts ──────────────────────────────────────────────── */
+  .vl-overlay {
+    position: fixed; inset: 0; z-index: 900; display: flex; align-items: center; justify-content: center;
+    background: rgba(15, 19, 26, 0.7); backdrop-filter: blur(4px);
+    animation: viewFadeIn 0.18s ease;
+  }
+  .vl-dialog {
+    background: rgba(26, 32, 40, 0.95); border: 1px solid rgba(74, 222, 128, 0.25); border-radius: 18px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(74, 222, 128, 0.08);
+    padding: 22px; width: min(420px, 92vw);
+  }
+  .vl-dialog h3 { color: #fff; font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  .vl-dialog p { color: #94a3b8; font-size: 13px; line-height: 1.55; }
+  .vl-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .vl-btn { padding: 9px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  .vl-btn:active { transform: scale(0.97); }
+  .vl-btn-cancel { background: #1e293b; color: #d1d5db; border: 1px solid #2d3748; }
+  .vl-btn-cancel:hover { color: #fff; border-color: #6b7280; }
+  .vl-btn-confirm { background: #273c38; color: #4ade80; border: 1px solid rgba(74, 222, 128, 0.5); box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); }
+  .vl-btn-confirm:hover { box-shadow: 0 0 16px rgba(74, 222, 128, 0.35); }
+  .vl-btn-danger { background: rgba(239, 68, 68, 0.12); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+  .vl-btn-danger:hover { background: rgba(239, 68, 68, 0.2); }
+  #toast-stack { position: fixed; top: 18px; right: 18px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
+  .vl-toast {
+    background: rgba(26, 32, 40, 0.95); backdrop-filter: blur(8px);
+    border: 1px solid #2d3748; border-left: 3px solid #4ade80; border-radius: 12px;
+    padding: 10px 14px; font-size: 12.5px; color: #e5e7eb; max-width: 320px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); cursor: pointer;
+    animation: fadeSlideIn 0.25s ease; transition: opacity 0.25s, transform 0.25s;
+  }
+  .vl-toast.error { border-left-color: #f87171; }
+  .vl-toast.success { border-left-color: #4ade80; }
+
+  /* ── Voices view: wizard ───────────────────────────────────────────── */
+  .wizard-step { display: none; }
+  .wizard-step.active { display: flex; flex-direction: column; gap: 18px; animation: viewFadeIn 0.25s ease; }
+  .wiz-back, .wiz-close {
+    background: none; border: none; color: #94a3b8; font-size: 18px; cursor: pointer;
+    padding: 4px 8px; border-radius: 8px; transition: all 0.15s; line-height: 1;
+  }
+  .wiz-back:hover, .wiz-close:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
+  .wiz-close { margin-left: auto; font-size: 22px; }
+
+  .method-card {
+    flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 20px 16px;
+    border-radius: 16px; background: #0f131a; border: 1px solid #2d3748;
+    cursor: pointer; transition: all 0.15s; position: relative;
+  }
+  .method-card:hover { border-color: rgba(74, 222, 128, 0.5); box-shadow: 0 0 12px rgba(74, 222, 128, 0.1); transform: translateY(-2px); }
+  .method-icon {
+    width: 36px; height: 36px; border-radius: 10px; background: #273c38; color: #4ade80;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .method-icon svg { width: 18px; height: 18px; }
+  .method-badge {
+    position: absolute; top: 10px; right: 10px; font-size: 9px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em; color: #4ade80;
+    background: rgba(74, 222, 128, 0.1); border: 1px solid rgba(74, 222, 128, 0.3);
+    padding: 2px 8px; border-radius: 9999px;
+  }
+
+  .script-card {
+    display: flex; flex-direction: column; gap: 4px; padding: 12px 14px;
+    border-radius: 12px; background: #0f131a; border: 1px solid #2d3748;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .script-card:hover { border-color: #6b7280; }
+  .script-card.selected { background: #273c38; border-color: #4ade80; box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); }
+  .script-card .sc-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #e5e7eb; }
+  .script-card.selected .sc-head { color: #4ade80; }
+  .script-card .sc-lang {
+    font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 6px;
+    background: #1e293b; color: #94a3b8; border: 1px solid #2d3748;
+  }
+  .script-card .sc-preview {
+    font-size: 11px; color: #64748b; line-height: 1.4; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+
+  .mic-select {
+    background: #0f131a; border: 1px solid #2d3748; border-radius: 10px;
+    color: #d1d5db; font-size: 13px; padding: 8px 10px; outline: none;
+  }
+  .mic-select:focus { border-color: rgba(74, 222, 128, 0.5); }
+  .live-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #4ade80;
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.8); animation: blink 1.6s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  .live-dot.off { background: #64748b; box-shadow: none; animation: none; }
+
+  .script-display {
+    background: #0f131a; border: 1px solid rgba(74, 222, 128, 0.25); border-radius: 16px;
+    padding: 18px 20px; font-size: 17px; line-height: 1.65; color: #f1f5f9;
+    box-shadow: inset 0 0 24px rgba(74, 222, 128, 0.04);
+  }
+
+  .live-wave-wrap { background: linear-gradient(180deg, #0f131a, #080b10); border: 1px solid #2d3748; border-radius: 14px; overflow: hidden; }
+  .level-bar { height: 4px; background: #1e293b; }
+  .level-fill {
+    height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e, #4ade80);
+    border-radius: 0 2px 2px 0; transition: width 0.08s linear;
+  }
+  .level-fill.hot { background: linear-gradient(90deg, #4ade80, #f59e0b); }
+
+  .rec-timeline {
+    position: relative; height: 8px; border-radius: 6px; overflow: hidden;
+    background: linear-gradient(90deg,
+      rgba(239,68,68,0.25) 0%, rgba(239,68,68,0.25) 20%,
+      rgba(245,158,11,0.25) 20%, rgba(245,158,11,0.25) 33.33%,
+      rgba(74,222,128,0.3) 33.33%, rgba(74,222,128,0.3) 80%,
+      rgba(245,158,11,0.25) 80%, rgba(245,158,11,0.25) 100%);
+  }
+  .rec-timeline-fill {
+    position: absolute; top: 0; left: 0; height: 100%; width: 0%;
+    background: rgba(74, 222, 128, 0.85); box-shadow: 0 0 8px rgba(74, 222, 128, 0.6);
+  }
+  .rec-timeline-mark { position: absolute; top: 0; width: 1px; height: 100%; background: rgba(255, 255, 255, 0.35); }
+
+  .wiz-record-btn {
+    width: 72px; height: 72px; border-radius: 50%; border: 2px solid rgba(74, 222, 128, 0.5);
+    background: #273c38; color: #4ade80; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.15s; box-shadow: 0 0 16px rgba(74, 222, 128, 0.25);
+    font-size: 24px; font-weight: 800;
+  }
+  .wiz-record-btn svg { width: 26px; height: 26px; }
+  .wiz-record-btn:hover { box-shadow: 0 0 24px rgba(74, 222, 128, 0.45); transform: scale(1.04); }
+  .wiz-record-btn:disabled { opacity: 0.4; cursor: default; box-shadow: none; transform: none; }
+  .wiz-record-btn.counting { border-color: rgba(74, 222, 128, 0.9); }
+  .wiz-record-btn.recording {
+    border-color: rgba(239, 68, 68, 0.7); background: rgba(239, 68, 68, 0.12); color: #f87171;
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.35); animation: rec-border-pulse 1.8s ease-in-out infinite;
+  }
+
+  .wiz-dropzone {
+    display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
+    padding: 44px 20px; border-radius: 16px; border: 2px dashed #2d3748;
+    background: #0f131a; color: #94a3b8; cursor: pointer; transition: all 0.15s;
+  }
+  .wiz-dropzone:hover, .wiz-dropzone.dragging { border-color: rgba(74, 222, 128, 0.6); background: rgba(74, 222, 128, 0.04); color: #d1d5db; }
+
+  .review-wave-wrap { background: linear-gradient(180deg, #0f131a, #080b10); border: 1px solid #2d3748; border-radius: 14px; padding: 8px 8px 10px; }
+  .verdict-chip { font-size: 10px; font-weight: 700; padding: 2px 10px; border-radius: 9999px; border: 1px solid; }
+  .verdict-chip.good { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); background: rgba(74, 222, 128, 0.1); }
+  .verdict-chip.warn { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.1); }
+  .verdict-chip.bad { color: #f87171; border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.1); }
+
+  .done-check {
+    width: 56px; height: 56px; border-radius: 50%; background: #273c38;
+    border: 1px solid rgba(74, 222, 128, 0.5); color: #4ade80; font-size: 28px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 20px rgba(74, 222, 128, 0.3);
+  }
+
+  /* ── Voices view: voice cards ──────────────────────────────────────── */
+  .voice-card {
+    background: rgba(15, 19, 26, 0.8); border: 1px solid #2d3748; border-radius: 14px;
+    padding: 14px; transition: all 0.2s; cursor: pointer;
+    display: flex; flex-direction: column; gap: 10px; position: relative; overflow: hidden;
+  }
+  .voice-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(74, 222, 128, 0.15), transparent);
+  }
+  .voice-card:hover { border-color: rgba(74, 222, 128, 0.3); }
+  .voice-card.selected { border-color: #4ade80; background: rgba(39, 60, 56, 0.45); box-shadow: 0 0 12px rgba(74, 222, 128, 0.15); }
+  .voice-card .vc-name { font-size: 14px; font-weight: 600; color: #e5e7eb; }
+  .voice-card.selected .vc-name { color: #4ade80; }
+  .voice-card .vc-meta { font-size: 11px; color: #64748b; }
+  .voice-card .vc-btn {
+    padding: 6px 12px; border-radius: 8px; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all 0.15s; background: #1e293b; color: #9ca3af; border: 1px solid #2d3748;
+  }
+  .voice-card .vc-btn:hover { color: #fff; border-color: #6b7280; }
+  .voice-card .vc-btn:disabled { opacity: 0.4; cursor: default; }
+  .voice-card .vc-btn.primary { background: #273c38; color: #4ade80; border-color: rgba(74, 222, 128, 0.3); }
+  .voice-card .vc-btn.danger:hover { color: #f87171; border-color: rgba(239, 68, 68, 0.4); }
+  .voice-card .vc-pending {
+    font-size: 9px; font-weight: 700; text-transform: uppercase; color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3);
+    padding: 1px 8px; border-radius: 9999px; white-space: nowrap;
+  }
+  .voice-name-input {
+    background: #0f131a; border: 1px solid rgba(74, 222, 128, 0.5); border-radius: 8px;
+    color: #e5e7eb; font-size: 14px; font-weight: 600; padding: 2px 8px; outline: none; flex: 1; min-width: 0;
+  }
 </style>
 </head>
 <body class="bg-omni-bg text-gray-200 min-h-screen flex flex-col items-center py-8 md:py-12 px-4 bg-circuit-pattern relative overflow-x-hidden">
@@ -234,6 +425,11 @@
           <svg class="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
           <span class="text-[10px] font-medium">Studio</span>
         </a>
+        <a class="sidebar-tab flex flex-col items-center py-3 px-1 rounded-xl text-omni-text-muted hover:text-white hover:bg-white/5 transition-all cursor-pointer relative" data-view="voices">
+          <svg class="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <span class="text-[10px] font-medium">Voices</span>
+          <span class="library-count hidden absolute -top-1 -right-1 w-5 h-5 rounded-full bg-omni-neon text-omni-bg text-[9px] font-bold flex items-center justify-center" id="voices-count">0</span>
+        </a>
         <a class="sidebar-tab flex flex-col items-center py-3 px-1 rounded-xl text-omni-text-muted hover:text-white hover:bg-white/5 transition-all cursor-pointer relative" data-view="library">
           <svg class="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
           <span class="text-[10px] font-medium">Library</span>
@@ -252,19 +448,20 @@
       <!-- Mobile tab bar -->
       <div class="mobile-tabs">
         <div class="mobile-tab active-tab" data-view="studio">Studio</div>
+        <div class="mobile-tab" data-view="voices">Voices</div>
         <div class="mobile-tab" data-view="library">Library</div>
         <div class="mobile-tab" data-view="settings">Settings</div>
       </div>
 
       <!-- Studio View -->
-      <div id="view-studio" class="app-view p-6 md:p-8 flex flex-col gap-6">
+      <div id="view-studio" class="app-view p-6 md:p-8 flex flex-col gap-6" tabindex="-1">
 
       <!-- Progress bar -->
-      <div class="progress-bar hidden" id="progress-bar" style="width:0%"></div>
+      <div class="progress-bar hidden" id="progress-bar" style="width:0%" aria-hidden="true"></div>
 
       <!-- Status -->
       <div class="flex items-center justify-center gap-2 min-h-[20px]">
-        <div id="status" class="text-center text-omni-text-muted text-sm font-medium">Loading models...</div>
+        <div id="status" role="status" aria-live="polite" class="text-center text-omni-text-muted text-sm font-medium">Loading models...</div>
         <span id="backend-badge" class="hidden text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border"></span>
       </div>
 
@@ -273,12 +470,15 @@
         <div class="absolute -inset-0.5 bg-gradient-to-r from-omni-neon to-blue-500 rounded-2xl blur opacity-20 group-hover:opacity-30 transition duration-500"></div>
         <div class="relative bg-omni-bg rounded-2xl p-5 neon-border flex flex-col" style="min-height: 180px;">
           <!-- Loading overlay (shown until models are ready) -->
-          <div id="loading-overlay" class="absolute inset-0 rounded-2xl flex flex-col items-center justify-center gap-3 z-10" style="background: rgba(15,19,26,0.85); backdrop-filter: blur(4px);">
-            <div class="loading-spinner"></div>
-            <span class="text-omni-text-muted text-sm font-medium">Loading models, please wait...</span>
+          <div id="loading-overlay" class="absolute inset-0 rounded-2xl flex flex-col items-center justify-center gap-3 z-10 p-4" style="background: rgba(15,19,26,0.85); backdrop-filter: blur(4px);">
+            <div class="loading-spinner" id="loading-spinner"></div>
+            <div id="loading-title" class="text-sm font-semibold text-white text-center">Loading VocoLoco&hellip;</div>
+            <div id="loading-sub" class="text-omni-text-muted text-xs leading-relaxed text-center" style="max-width:340px;"></div>
+            <div id="loading-track" class="hidden"><div id="loading-fill"></div></div>
+            <div id="loading-stats" class="text-omni-text-muted text-xs font-mono text-center"></div>
           </div>
-          <textarea id="text-input" maxlength="500" class="w-full flex-1 bg-transparent border-none text-gray-300 focus:ring-0 resize-none text-base leading-relaxed placeholder-omni-text-muted/50 outline-none" placeholder="Try: The quick brown fox jumps over the lazy dog." disabled></textarea>
-          <div class="text-right text-omni-text-muted text-xs mt-2"><span id="char-count">0</span> / 500</div>
+          <textarea id="text-input" maxlength="2000" aria-label="Text to speak" title="Enter to generate &middot; Shift+Enter for a new line" class="w-full flex-1 bg-transparent border-none text-gray-300 focus:ring-0 resize-none text-base leading-relaxed placeholder-omni-text-muted/50 outline-none" placeholder="Try: The quick brown fox jumps over the lazy dog." disabled></textarea>
+          <div class="text-right text-omni-text-muted text-xs mt-2"><span id="char-count">0</span> / 2000</div>
         </div>
       </div>
 
@@ -320,91 +520,38 @@
         Generate Speech
       </button>
 
-      <!-- Player (appears after generation) -->
       <!-- Player (always visible, empty state until first generation) -->
       <div id="studio-player">
         <div class="relative rounded-2xl overflow-hidden border border-omni-border" style="background: linear-gradient(180deg, #0f131a, #080b10);">
           <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-omni-neon/30 to-transparent"></div>
-          <canvas id="waveform" class="w-full" style="height:80px; display:block;"></canvas>
+          <div id="waveform-wrap" class="relative" style="height:80px;">
+            <canvas id="waveform" class="w-full" style="height:80px; display:block; cursor:pointer;" role="slider" tabindex="0" aria-label="Playback position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></canvas>
+            <div id="playhead" class="hidden" aria-hidden="true"></div>
+            <div id="buffering-chip" class="hidden" aria-hidden="true">Generating&hellip;</div>
+          </div>
           <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-omni-border/30 bg-omni-bg/50">
-            <div id="player-controls" class="flex items-center gap-2" style="opacity:0.3; pointer-events:none;">
-              <button id="replay-btn" class="py-2 px-4 rounded-lg bg-omni-active-bg text-omni-neon border border-omni-neon/40 shadow-neon font-semibold text-xs transition-all hover:shadow-neon-strong active:scale-95">&#9654; Replay</button>
-              <button id="download-btn" class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-white border border-omni-border text-xs font-semibold transition-all active:scale-95">&#8595; MP3</button>
-              <button id="save-gen-voice-btn" class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-omni-neon border border-omni-border text-xs font-semibold transition-all hover:border-omni-neon/30 active:scale-95">Save Voice</button>
+            <div id="player-controls" class="flex flex-wrap items-center gap-2" style="opacity:0.3; pointer-events:none;">
+              <button id="replay-btn" aria-label="Replay or stop playback" class="py-2 px-4 rounded-lg bg-omni-active-bg text-omni-neon border border-omni-neon/40 shadow-neon font-semibold text-xs transition-all hover:shadow-neon-strong active:scale-95">&#9654; Replay</button>
+              <button id="download-btn" aria-label="Download as MP3" class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-white border border-omni-border text-xs font-semibold transition-all active:scale-95">&#8595; MP3</button>
+              <button id="save-gen-voice-btn" aria-label="Save this generation as a reusable voice" class="py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-omni-neon border border-omni-border text-xs font-semibold transition-all hover:border-omni-neon/30 active:scale-95">Save Voice</button>
+              <button id="voice-lock-btn" aria-pressed="false" class="hidden py-2 px-4 rounded-lg bg-omni-btn-bg text-gray-300 hover:text-omni-neon border border-omni-border text-xs font-semibold transition-all hover:border-omni-neon/30 active:scale-95" title="Reuse this exact voice for the next generations">&#x1F512; Keep this voice</button>
             </div>
-            <span id="player-duration" class="text-omni-text-muted text-xs font-medium"></span>
+            <span id="player-duration" class="text-omni-text-muted text-xs font-medium font-mono"></span>
           </div>
         </div>
       </div>
 
-      <!-- Cloned Voices -->
+      <!-- Voice picker -->
       <div class="pt-4 border-t border-omni-border/50">
-        <label class="block text-omni-text-muted text-xs uppercase tracking-wider mb-3 font-semibold">Cloned Voices</label>
-        <div class="flex flex-wrap gap-2" id="saved-voices"></div>
-        <button id="new-clone-btn" class="mt-2 py-2 px-5 rounded-full bg-omni-bg border border-omni-border border-dashed text-gray-400 hover:text-white hover:border-gray-500 font-medium text-sm transition-all">+ Clone a Voice</button>
-
-        <!-- Clone panel (expandable) -->
-        <div class="clone-panel mt-3" id="clone-panel">
-          <div class="bg-omni-bg rounded-xl p-4 border border-omni-border/50 flex flex-col gap-4">
-
-            <!-- Tips (visible when no audio loaded) -->
-            <div id="clone-tips" class="smooth flex flex-col gap-1.5 text-xs text-omni-text-muted/70">
-              <p>Speak naturally for <strong class="text-omni-text-muted">5-10 seconds</strong></p>
-              <p>Pauses and rhythm in your recording shape the cadence of the cloned voice</p>
-              <p>Longer clips increase generation time without improving quality</p>
-            </div>
-
-            <!-- Two action buttons -->
-            <div class="flex gap-2">
-              <label id="upload-btn" class="clone-action-btn flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-omni-btn-bg border border-omni-border text-gray-300 hover:text-white hover:border-gray-500 text-sm font-medium transition-all cursor-pointer active:scale-[0.98]">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                Upload Audio
-                <input type="file" id="ref-audio" accept="audio/*" disabled class="hidden"/>
-              </label>
-              <button type="button" id="mic-btn" disabled class="clone-action-btn flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-omni-btn-bg border border-omni-border text-gray-300 hover:text-white hover:border-gray-500 text-sm font-medium transition-all cursor-pointer active:scale-[0.98]">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
-                <span id="mic-label">Record</span>
-              </button>
-            </div>
-
-            <!-- Recording indicator -->
-            <div class="smooth off flex items-center justify-center gap-3 text-sm text-red-400" id="rec-info">
-              <span class="rec-dot"></span>
-              <span id="rec-time">0s</span>
-              <span id="rec-hint" class="text-omni-text-muted/50 text-xs"></span>
-              <button type="button" id="stop-btn" class="bg-red-500/20 border border-red-500/40 text-red-400 px-4 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all hover:bg-red-500/30">Stop</button>
-            </div>
-
-            <!-- Audio info bar (greyed out until audio loaded) -->
-            <div id="clone-audio-info" class="flex items-center gap-3 bg-omni-panel/50 rounded-xl px-3 py-2.5 border border-omni-border/30 transition-opacity" style="opacity:0.3; pointer-events:none;">
-              <audio id="ref-preview" controls class="h-8 flex-1 rounded" style="min-width:0"></audio>
-              <span id="clone-duration" class="text-xs text-omni-text-muted whitespace-nowrap">No audio</span>
-              <button type="button" id="clone-clear-btn" class="text-xs text-omni-text-muted/50 hover:text-red-400 transition-colors cursor-pointer">&times;</button>
-            </div>
-
-            <!-- Duration warning -->
-            <div id="clone-duration-warn" class="smooth off text-xs text-amber-400/80 text-center">&nbsp;</div>
-
-            <!-- Transcript + Save (greyed out until audio loaded) -->
-            <div id="clone-save-section" class="flex flex-col gap-3 transition-opacity" style="opacity:0.3; pointer-events:none;">
-              <div>
-                <input type="text" id="ref-text" placeholder="What exactly is said in the audio? (improves accuracy)" disabled class="w-full bg-omni-bg border border-omni-border rounded-lg px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40"/>
-                <p class="mt-1 text-[10px] text-omni-text-muted/40">Type the exact words spoken in the recording</p>
-              </div>
-              <div class="flex gap-2">
-                <input type="text" id="save-voice-name" placeholder="Voice name..." disabled class="flex-1 bg-omni-bg border border-omni-border rounded-lg px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40"/>
-                <button type="button" id="save-voice-btn" disabled class="py-2 px-5 rounded-lg bg-omni-active-bg text-omni-neon border border-omni-neon/30 text-sm font-semibold transition-all hover:shadow-neon active:scale-95">Save</button>
-              </div>
-            </div>
-
-          </div>
+        <div class="flex items-center justify-between mb-3">
+          <label class="block text-omni-text-muted text-xs uppercase tracking-wider font-semibold">Voice</label>
+          <a id="manage-voices-link" class="text-xs text-omni-text-muted hover:text-omni-neon transition-colors cursor-pointer" role="button" tabindex="0">Manage &rarr;</a>
         </div>
+        <div class="flex flex-wrap gap-2" id="studio-voice-picker"></div>
       </div>
 
       <!-- Hidden compat elements -->
-      <div id="clone-toggle" style="display:none"></div>
-      <div id="clone-body" style="display:none"></div>
-      <select id="quality" style="display:none">
+      <select id="quality" style="display:none" aria-hidden="true">
         <option value="8">Fast</option>
         <option value="16">Good</option>
         <option value="20" selected>High</option>
@@ -413,8 +560,164 @@
 
       </div><!-- end view-studio -->
 
+      <!-- Voices View -->
+      <div id="view-voices" class="app-view p-6 md:p-8 flex flex-col gap-5" style="display:none" tabindex="-1">
+
+        <!-- ===== Management (default) ===== -->
+        <div id="voices-home" class="flex flex-col gap-5">
+          <div class="flex items-center justify-between">
+            <h3 class="text-lg font-bold text-white">Your Voices</h3>
+            <button id="new-voice-btn" class="py-2 px-5 rounded-xl bg-omni-active-bg text-omni-neon border border-omni-neon/30 text-sm font-semibold transition-all hover:shadow-neon active:scale-95">+ New voice</button>
+          </div>
+          <div id="voices-encoder-note" class="hidden text-xs text-amber-400/80 bg-omni-bg rounded-xl p-3 border border-amber-500/20">
+            The voice encoder could not load on this device (not enough memory). Voices that were already set up keep working; new recordings are saved but cloning them may be unavailable here.
+          </div>
+          <div class="flex flex-col gap-3" id="voices-list"></div>
+          <div id="voices-empty" class="text-center py-12 flex-col items-center gap-4" style="display:none">
+            <div class="text-omni-text-muted text-sm">No voices yet. Record 10 seconds of your voice and use it for any text.</div>
+            <button id="voices-empty-cta" class="py-3 px-6 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-sm transition-all hover:shadow-neon-strong active:scale-[0.99]">Create your first voice</button>
+          </div>
+        </div>
+
+        <!-- ===== Wizard ===== -->
+        <div id="voice-wizard" class="flex-col gap-5" style="display:none">
+          <div class="flex items-center gap-3">
+            <button id="wiz-back-btn" class="wiz-back" aria-label="Back">&larr;</button>
+            <h3 class="text-lg font-bold text-white" id="wiz-title">New voice</h3>
+            <button id="wiz-close-btn" class="wiz-close" aria-label="Close wizard">&times;</button>
+          </div>
+
+          <!-- Step 1: method -->
+          <div class="wizard-step" id="wiz-step-method">
+            <p class="text-omni-text-muted text-sm">How do you want to add a voice?</p>
+            <div class="flex gap-3">
+              <div class="method-card" id="wiz-method-record" role="button" tabindex="0">
+                <div class="method-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg></div>
+                <div class="text-sm font-semibold text-white">Record with a script</div>
+                <div class="text-xs text-omni-text-muted">Read a short text aloud &mdash; the transcript fills itself in. Takes about 30 seconds.</div>
+                <span class="method-badge">Recommended</span>
+              </div>
+              <div class="method-card" id="wiz-method-upload" role="button" tabindex="0">
+                <div class="method-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></div>
+                <div class="text-sm font-semibold text-white">Upload audio</div>
+                <div class="text-xs text-omni-text-muted">Use an existing clip of the voice. You type the transcript yourself.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2 (record path): script picker -->
+          <div class="wizard-step" id="wiz-step-script">
+            <p class="text-omni-text-muted text-sm">Pick a script to read. It becomes the transcript automatically.</p>
+            <div class="flex flex-col gap-2" id="wiz-script-list"></div>
+            <div id="wiz-custom-wrap" class="hidden">
+              <textarea id="wiz-custom-text" maxlength="300" rows="3" class="w-full bg-omni-bg border border-omni-border rounded-xl px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40 resize-none" placeholder="Write 2-3 sentences you feel comfortable reading aloud (about 10 seconds)." aria-label="Your own script text"></textarea>
+            </div>
+            <button id="wiz-script-next" disabled class="w-full py-3 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-sm transition-all hover:shadow-neon-strong active:scale-[0.99] disabled:opacity-30 disabled:cursor-default">Continue to recording</button>
+          </div>
+
+          <!-- Step 3 (record path): mic check + record -->
+          <div class="wizard-step" id="wiz-step-record">
+            <div class="flex items-center gap-3">
+              <span class="live-dot off" id="wiz-mic-status" aria-hidden="true"></span>
+              <select id="wiz-mic-select" class="mic-select flex-1" aria-label="Microphone"></select>
+            </div>
+            <div id="wiz-mic-error" class="hidden text-sm text-amber-400/90 bg-omni-bg rounded-xl p-4 border border-amber-500/20" role="alert">
+              <span id="wiz-mic-error-text"></span>
+              <div class="flex gap-2" style="margin-top:10px;">
+                <button id="wiz-mic-retry" class="py-2 px-4 rounded-lg bg-omni-btn-bg border border-omni-border text-gray-300 text-xs font-semibold transition-all hover:text-white active:scale-95">Try again</button>
+                <button id="wiz-mic-fallback-upload" class="py-2 px-4 rounded-lg bg-omni-btn-bg border border-omni-border text-gray-300 text-xs font-semibold transition-all hover:text-white active:scale-95">Upload audio instead</button>
+              </div>
+            </div>
+            <div class="script-display" id="wiz-script-display"></div>
+            <div class="live-wave-wrap">
+              <canvas id="wiz-live-wave" style="width:100%;height:72px;display:block;" aria-hidden="true"></canvas>
+              <div class="level-bar"><div class="level-fill" id="wiz-level-fill"></div></div>
+            </div>
+            <div>
+              <div class="rec-timeline" aria-hidden="true">
+                <div class="rec-timeline-fill" id="wiz-rec-fill"></div>
+                <div class="rec-timeline-mark" style="left:20%"></div>
+                <div class="rec-timeline-mark" style="left:33.33%"></div>
+                <div class="rec-timeline-mark" style="left:80%"></div>
+              </div>
+              <div class="flex items-center justify-between mt-2">
+                <span class="text-sm font-mono text-gray-300" id="wiz-rec-elapsed">0.0s</span>
+                <span class="text-xs text-omni-text-muted" id="wiz-rec-zone">Ready when you are &mdash; aim for 5-12 seconds</span>
+              </div>
+            </div>
+            <div id="wiz-silence-hint" class="hidden text-xs text-amber-400/90 text-center" role="status" aria-live="polite"></div>
+            <div class="flex flex-col items-center gap-2">
+              <button id="wiz-record-btn" class="wiz-record-btn" disabled aria-label="Start or stop recording"><span id="wiz-record-btn-inner" class="flex items-center justify-center"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg></span></button>
+              <span class="text-xs text-omni-text-muted" id="wiz-record-label">Tap to record &mdash; starts after a 3-2-1 countdown</span>
+            </div>
+          </div>
+
+          <!-- Step 2' (upload path) -->
+          <div class="wizard-step" id="wiz-step-upload">
+            <div class="wiz-dropzone" id="wiz-dropzone" role="button" tabindex="0" aria-label="Drop an audio file here or click to browse">
+              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+              <div class="text-sm font-semibold text-white">Drop an audio file here</div>
+              <div class="text-xs text-omni-text-muted">or click to browse &mdash; MP3, WAV, M4A, OGG &middot; 5-12 seconds of one person speaking works best</div>
+              <input type="file" id="wiz-file-input" accept="audio/*" class="hidden"/>
+            </div>
+            <div id="wiz-upload-error" class="hidden text-xs text-amber-400/90 text-center" role="status"></div>
+          </div>
+
+          <!-- Step 4: review -->
+          <div class="wizard-step" id="wiz-step-review">
+            <div class="review-wave-wrap">
+              <canvas id="wiz-review-wave" style="width:100%;height:64px;display:block;" aria-hidden="true"></canvas>
+              <div class="flex items-center justify-between px-1 pt-2">
+                <button id="wiz-review-play" class="py-2 px-4 rounded-lg bg-omni-active-bg text-omni-neon border border-omni-neon/40 font-semibold text-xs transition-all hover:shadow-neon active:scale-95" aria-label="Play the recording">&#9654; Play</button>
+                <span class="flex items-center gap-2">
+                  <span class="text-xs text-omni-text-muted font-mono" id="wiz-review-duration">0.0s</span>
+                  <span class="verdict-chip good" id="wiz-review-verdict"></span>
+                </span>
+              </div>
+            </div>
+            <div id="wiz-truncate-note" class="hidden text-xs text-amber-400/80 text-center">Clip trimmed to the first 15 seconds &mdash; longer audio does not improve cloning.</div>
+            <div>
+              <label for="wiz-transcript" class="block text-omni-text-muted text-xs uppercase tracking-wider mb-2 font-semibold">Transcript</label>
+              <textarea id="wiz-transcript" rows="3" maxlength="500" class="w-full bg-omni-bg border border-omni-border rounded-xl px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40 resize-none" placeholder="Type the exact words spoken in the audio"></textarea>
+              <p class="mt-1 text-[10px] text-omni-text-muted/40" id="wiz-transcript-hint"></p>
+            </div>
+            <div>
+              <label for="wiz-voice-name" class="block text-omni-text-muted text-xs uppercase tracking-wider mb-2 font-semibold">Voice name</label>
+              <input type="text" id="wiz-voice-name" maxlength="40" class="w-full bg-omni-bg border border-omni-border rounded-xl px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40" placeholder="e.g. My narrator voice"/>
+            </div>
+            <div class="flex gap-2">
+              <button id="wiz-review-back" class="flex-1 py-3 rounded-xl bg-omni-btn-bg border border-omni-border text-gray-300 hover:text-white text-sm font-medium transition-all active:scale-[0.98]">&larr; Re-record</button>
+              <button id="wiz-save-btn" class="flex-1 py-3 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-sm transition-all hover:shadow-neon-strong active:scale-[0.99] disabled:opacity-30 disabled:cursor-default">Save voice</button>
+            </div>
+            <div id="wiz-save-blocker" class="hidden text-xs text-amber-400/90 text-center" role="status"></div>
+          </div>
+
+          <!-- Step 5: saving -->
+          <div class="wizard-step" id="wiz-step-saving">
+            <div class="flex flex-col items-center gap-4 py-10">
+              <div class="loading-spinner"></div>
+              <span class="text-sm text-omni-text-muted" id="wiz-saving-status" role="status" aria-live="polite">Analyzing voice&hellip; (one-time setup)</span>
+            </div>
+          </div>
+
+          <!-- Step 6: done -->
+          <div class="wizard-step" id="wiz-step-done">
+            <div class="flex flex-col items-center gap-4 py-6 text-center">
+              <div class="done-check">&#10003;</div>
+              <div class="text-lg font-bold text-white" id="wiz-done-title">Voice saved</div>
+              <div class="text-sm text-omni-text-muted" id="wiz-done-sub"></div>
+              <div id="wiz-done-note" class="hidden text-xs text-amber-400/80" style="max-width:24rem;"></div>
+              <div class="flex gap-2">
+                <button id="wiz-test-btn" class="py-3 px-6 rounded-xl bg-omni-active-bg text-omni-neon border border-omni-neon/40 font-semibold text-sm transition-all hover:shadow-neon active:scale-95">&#9654; Test this voice</button>
+                <button id="wiz-goto-studio" class="py-3 px-6 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-sm transition-all hover:shadow-neon-strong active:scale-[0.99]">Go to Studio &rarr;</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- end view-voices -->
+
       <!-- Library View -->
-      <div id="view-library" class="app-view p-6 md:p-8 flex flex-col gap-5" style="display:none">
+      <div id="view-library" class="app-view p-6 md:p-8 flex flex-col gap-5" style="display:none" tabindex="-1">
         <div class="flex items-center justify-between mb-2">
           <h3 class="text-lg font-bold text-white">Generation Library</h3>
           <span class="text-omni-text-muted text-xs" id="library-total">0 generations</span>
@@ -427,7 +730,7 @@
       </div><!-- end view-library -->
 
       <!-- Settings View -->
-      <div id="view-settings" class="app-view p-6 md:p-8 flex flex-col gap-6" style="display:none">
+      <div id="view-settings" class="app-view p-6 md:p-8 flex flex-col gap-6" style="display:none" tabindex="-1">
         <h3 class="text-lg font-bold text-white">Settings</h3>
 
         <!-- Storage usage -->
@@ -495,13 +798,6 @@
     </section>
   </div>
 </main>
-
-<!-- Hidden compat -->
-<div id="player" style="display:none"></div>
-
-<!-- Hidden history compat elements -->
-<div id="history-section" style="display:none"></div>
-<div id="history-scroll" style="display:none"></div>
 
 <!-- Footer -->
 <footer class="w-full max-w-4xl mt-10 mb-6 z-10 flex flex-col items-center gap-6 overflow-hidden">
@@ -571,10 +867,26 @@
     <div class="glass-panel rounded-2xl p-5 border border-omni-border/50 shadow-glass">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-xs font-bold text-white">What's new</h3>
-        <button id="changelog-close" class="text-omni-text-muted hover:text-white text-sm leading-none cursor-pointer">&times;</button>
+        <button id="changelog-close" aria-label="Close changelog" class="text-omni-text-muted hover:text-white text-sm leading-none cursor-pointer">&times;</button>
       </div>
       <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
         <div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.2.0</span>
+            <span class="text-[10px] text-omni-text-muted/40">Jul 2, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>Streamed generation: long texts (up to 2000 characters) start playing within seconds</li>
+            <li>New Voices tab: guided recording wizard with live level meter and auto-filled transcripts</li>
+            <li>Voices are analyzed once and cached &mdash; cloned generation starts much faster</li>
+            <li>Click-to-seek player with playhead and elapsed time</li>
+            <li>Accurate download progress with size and time remaining, first-run setup screen</li>
+            <li>Graceful cancel keeps the audio already generated</li>
+            <li>Library: delete items, reuse text, voice and quality info</li>
+            <li>Keyboard navigation and screen-reader improvements</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
           <div class="flex items-center gap-2 mb-1">
             <span class="text-[11px] font-bold text-omni-neon">v1.1.3</span>
             <span class="text-[10px] text-omni-text-muted/40">Apr 12, 2026</span>
@@ -646,7 +958,7 @@
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px]">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.1.1</button>
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.2.0</button>
   </div>
 
 
@@ -655,11 +967,10 @@
 <script>
   document.getElementById('donate-btn').addEventListener('click', () => {
     document.getElementById('donate-modal').classList.toggle('hidden');
-    document.getElementById('settings-modal').classList.add('hidden');
   });
 
   // Changelog toggle
-  const CURRENT_VERSION = 'v1.1.3';
+  const CURRENT_VERSION = 'v1.2.0';
   document.getElementById('version-btn').textContent = CURRENT_VERSION;
   const changelogPanel = document.getElementById('changelog-panel');
   function toggleChangelog(show) {
@@ -692,111 +1003,7 @@
     setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateY(10px)'; setTimeout(() => toast.remove(), 300); }, 8000);
   }
   localStorage.setItem('vocoloco-version', CURRENT_VERSION);
-
-
-  function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-  }
-
-  async function getDBSize(dbName) {
-    return new Promise((resolve) => {
-      const req = indexedDB.open(dbName);
-      req.onsuccess = () => {
-        const db = req.result;
-        const storeNames = Array.from(db.objectStoreNames);
-        if (storeNames.length === 0) { db.close(); resolve(0); return; }
-        const tx = db.transaction(storeNames, 'readonly');
-        let total = 0;
-        let pending = storeNames.length;
-        storeNames.forEach(name => {
-          const store = tx.objectStore(name);
-          const r = store.getAll();
-          r.onsuccess = () => {
-            for (const val of r.result) {
-              if (val instanceof ArrayBuffer) total += val.byteLength;
-              else if (val instanceof Blob) total += val.size;
-              else if (val && val.byteLength !== undefined) total += val.byteLength;
-              else total += new Blob([JSON.stringify(val)]).size;
-            }
-            if (--pending === 0) { db.close(); resolve(total); }
-          };
-          r.onerror = () => { if (--pending === 0) { db.close(); resolve(total); } };
-        });
-      };
-      req.onerror = () => resolve(0);
-    });
-  }
-
-  async function getCacheAPISize(cacheName) {
-    try {
-      const cache = await caches.open(cacheName);
-      const keys = await cache.keys();
-      let total = 0;
-      for (const req of keys) {
-        const resp = await cache.match(req);
-        if (resp) {
-          const blob = await resp.blob();
-          total += blob.size;
-        }
-      }
-      return total;
-    } catch { return 0; }
-  }
-
-  async function calculateStorage() {
-    const modelsSize = await getCacheAPISize('omnivoice-models-v1');
-    const historySize = await getDBSize('omnivoice-history');
-    const voicesSize = await getDBSize('omnivoice-voices');
-    const total = modelsSize + historySize + voicesSize;
-
-    document.getElementById('storage-models').textContent = formatBytes(modelsSize);
-    document.getElementById('storage-history').textContent = formatBytes(historySize);
-    document.getElementById('storage-voices').textContent = formatBytes(voicesSize);
-    document.getElementById('storage-total').textContent = formatBytes(total);
-  }
-
-  async function clearDB(dbName) {
-    return new Promise((resolve) => {
-      const req = indexedDB.deleteDatabase(dbName);
-      req.onsuccess = () => resolve();
-      req.onerror = () => resolve();
-    });
-  }
-
-  document.getElementById('clear-cache-btn').addEventListener('click', async () => {
-    if (!confirm('Clear cached models? You will need to re-download ~3 GB on next load.')) return;
-    await caches.delete('omnivoice-models-v1');
-    // Also clean up legacy IndexedDB cache if present
-    await clearDB('omnivoice-cache');
-    calculateStorage();
-  });
-
-  document.getElementById('clear-history-btn').addEventListener('click', async () => {
-    if (!confirm('Clear all generation history?')) return;
-    await clearDB('omnivoice-history');
-    calculateStorage();
-    location.reload();
-  });
-
-  document.getElementById('clear-voices-btn').addEventListener('click', async () => {
-    if (!confirm('Clear all saved voices?')) return;
-    await clearDB('omnivoice-voices');
-    calculateStorage();
-    location.reload();
-  });
-
-  document.getElementById('clear-all-btn').addEventListener('click', async () => {
-    if (!confirm('Clear ALL local data? Models will need to re-download (~3 GB).')) return;
-    await caches.delete('omnivoice-models-v1');
-    await clearDB('omnivoice-cache');
-    await clearDB('omnivoice-history');
-    await clearDB('omnivoice-voices');
-    location.reload();
-  });
+  // Storage usage + data management logic lives in app.js (Settings section).
 </script>
 
 <script>
@@ -862,15 +1069,18 @@
       });
     });
   }
-  const s = document.createElement('script');
   // Load lamejs for MP3 encoding (must load before app.js)
   const lame = document.createElement('script');
   lame.src = 'lib/lamejs.min.js';
   lame.onload = () => {
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = 'app.js?v=5';
+    s.src = 'app.js?v=6';
     document.body.appendChild(s);
+  };
+  lame.onerror = () => {
+    const statusEl = document.getElementById('status');
+    if (statusEl) statusEl.textContent = 'Failed to load the MP3 encoder — check your connection and reload the page.';
   };
   document.body.appendChild(lame);
 })();
