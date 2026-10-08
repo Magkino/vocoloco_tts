@@ -353,6 +353,17 @@
   .wiz-dropzone:hover, .wiz-dropzone.dragging { border-color: rgba(74, 222, 128, 0.6); background: rgba(74, 222, 128, 0.04); color: #d1d5db; }
 
   .review-wave-wrap { background: linear-gradient(180deg, #0f131a, #080b10); border: 1px solid #2d3748; border-radius: 14px; padding: 8px 8px 10px; }
+  /* Trim editor (voice wizard review step) */
+  .trim-main { position: relative; touch-action: none; user-select: none; cursor: crosshair; }
+  .trim-shade { position: absolute; top: 0; bottom: 0; background: rgba(8, 11, 16, 0.72); pointer-events: none; }
+  .trim-sel { position: absolute; top: 0; bottom: 0; cursor: grab; background: rgba(74, 222, 128, 0.06); border-top: 2px solid rgba(74, 222, 128, 0.55); border-bottom: 2px solid rgba(74, 222, 128, 0.55); }
+  .trim-sel:active { cursor: grabbing; }
+  .trim-handle { position: absolute; top: -4px; bottom: -4px; width: 16px; margin-left: -8px; cursor: ew-resize; z-index: 2; outline: none; }
+  .trim-handle::after { content: ''; position: absolute; left: 6px; top: 0; bottom: 0; width: 4px; border-radius: 2px; background: #4ade80; box-shadow: 0 0 8px rgba(74, 222, 128, 0.7); }
+  .trim-handle:focus-visible::after { box-shadow: 0 0 0 2px #f8fafc, 0 0 8px rgba(74, 222, 128, 0.7); }
+  .trim-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #f8fafc; box-shadow: 0 0 6px rgba(248, 250, 252, 0.6); pointer-events: none; z-index: 3; }
+  .trim-overview-wrap { position: relative; margin-bottom: 6px; cursor: pointer; touch-action: none; user-select: none; }
+  .trim-ov-window { position: absolute; top: 0; bottom: 0; min-width: 3px; border: 1px solid #4ade80; border-radius: 3px; background: rgba(74, 222, 128, 0.18); pointer-events: none; }
   .verdict-chip { font-size: 10px; font-weight: 700; padding: 2px 10px; border-radius: 9999px; border: 1px solid; }
   .verdict-chip.good { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); background: rgba(74, 222, 128, 0.1); }
   .verdict-chip.warn { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.1); }
@@ -657,7 +668,7 @@
             <div class="wiz-dropzone" id="wiz-dropzone" role="button" tabindex="0" aria-label="Drop an audio file here or click to browse">
               <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
               <div class="text-sm font-semibold text-white">Drop an audio file here</div>
-              <div class="text-xs text-omni-text-muted">or click to browse &mdash; MP3, WAV, M4A, OGG &middot; 5-12 seconds of one person speaking works best</div>
+              <div class="text-xs text-omni-text-muted">or click to browse &mdash; MP3, WAV, M4A, OGG &middot; longer files are fine, you pick the part to clone next</div>
               <input type="file" id="wiz-file-input" accept="audio/*" class="hidden"/>
             </div>
             <div id="wiz-upload-error" class="hidden text-xs text-amber-400/90 text-center" role="status"></div>
@@ -666,16 +677,21 @@
           <!-- Step 4: review -->
           <div class="wizard-step" id="wiz-step-review">
             <div class="review-wave-wrap">
-              <canvas id="wiz-review-wave" style="width:100%;height:64px;display:block;" aria-hidden="true"></canvas>
+              <div id="wiz-trim-overview-wrap" class="trim-overview-wrap hidden" title="Click or drag to move the selection">
+                <canvas id="wiz-trim-overview" style="width:100%;height:24px;display:block;" aria-hidden="true"></canvas>
+              </div>
+              <div class="trim-main">
+                <canvas id="wiz-review-wave" style="width:100%;height:64px;display:block;" aria-hidden="true"></canvas>
+              </div>
               <div class="flex items-center justify-between px-1 pt-2">
-                <button id="wiz-review-play" class="py-2 px-4 rounded-lg bg-omni-active-bg text-omni-neon border border-omni-neon/40 font-semibold text-xs transition-all hover:shadow-neon active:scale-95" aria-label="Play the recording">&#9654; Play</button>
+                <button id="wiz-review-play" class="py-2 px-4 rounded-lg bg-omni-active-bg text-omni-neon border border-omni-neon/40 font-semibold text-xs transition-all hover:shadow-neon active:scale-95" aria-label="Play the selected part">&#9654; Play</button>
                 <span class="flex items-center gap-2">
                   <span class="text-xs text-omni-text-muted font-mono" id="wiz-review-duration">0.0s</span>
                   <span class="verdict-chip good" id="wiz-review-verdict"></span>
                 </span>
               </div>
+              <p id="wiz-trim-info" class="text-[10px] text-omni-text-muted/40" style="padding:6px 4px 0;" aria-live="polite"></p>
             </div>
-            <div id="wiz-truncate-note" class="hidden text-xs text-amber-400/80 text-center">Clip trimmed to the first 15 seconds &mdash; longer audio does not improve cloning.</div>
             <div>
               <label for="wiz-transcript" class="block text-omni-text-muted text-xs uppercase tracking-wider mb-2 font-semibold">Transcript</label>
               <textarea id="wiz-transcript" rows="3" maxlength="500" class="w-full bg-omni-bg border border-omni-border rounded-xl px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40 resize-none" placeholder="Type the exact words spoken in the audio"></textarea>
@@ -872,6 +888,18 @@
       <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
         <div>
           <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.3.0</span>
+            <span class="text-[10px] text-omni-text-muted/40">Oct 9, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>Trim editor for new voices: upload or record longer audio and pick exactly the part to clone</li>
+            <li>Save any part of a generation as a voice, not just the first sentence</li>
+            <li>Fixed a small sound at the start of every part when using a cloned voice</li>
+            <li>Saved voices are re-analyzed once in the background to apply the fix</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
+          <div class="flex items-center gap-2 mb-1">
             <span class="text-[11px] font-bold text-omni-neon">v1.2.1</span>
             <span class="text-[10px] text-omni-text-muted/40">Oct 9, 2026</span>
           </div>
@@ -969,7 +997,7 @@
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px]">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.2.1</button>
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.3.0</button>
   </div>
 
 
@@ -981,7 +1009,7 @@
   });
 
   // Changelog toggle
-  const CURRENT_VERSION = 'v1.2.1';
+  const CURRENT_VERSION = 'v1.3.0';
   document.getElementById('version-btn').textContent = CURRENT_VERSION;
   const changelogPanel = document.getElementById('changelog-panel');
   function toggleChangelog(show) {
@@ -1086,7 +1114,7 @@
   lame.onload = () => {
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = 'app.js?v=7';
+    s.src = 'app.js?v=8';
     document.body.appendChild(s);
   };
   lame.onerror = () => {

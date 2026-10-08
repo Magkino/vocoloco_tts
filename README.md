@@ -17,6 +17,7 @@ VocoLoco uses WebGPU and WebAssembly to run a 600M-parameter diffusion TTS model
 - **Streamed generation**: long texts (up to 2000 characters) are split into sentences and start playing within seconds
 - **Voice design**: control gender and pitch with simple toggles, lock a voice you like for reuse
 - **Guided voice cloning**: a step-by-step wizard with curated reading scripts (the transcript fills itself in), live level meter, and instant voice testing
+- **Trim editor**: upload or record longer audio (or use any part of a generation) and pick exactly the 3-15 s to clone, with snap-to-pause handles and a preview playhead
 - **Saved voices**: cloned voices are analyzed once and cached locally, so generation with them starts fast
 - **Generation library**: replay, reuse, delete, and download past generations as MP3 with AI-provenance metadata
 - **GPU-accelerated**: WebGPU for model inference, with a custom compute shader for post-processing
@@ -62,11 +63,12 @@ vocoloco_tts/
 ├── player.js               # StreamingPlayer: chunked playback, seek, playhead, waveform
 ├── text-chunker.js         # Sentence-aligned chunking for streamed generation
 ├── ui-dialogs.js           # Toasts and confirm dialogs (replaces native dialogs)
+├── trim-editor.js          # Pick the part of a longer clip to use as a voice reference
 ├── workers/
 │   ├── tts-worker.js       # ONNX inference, diffusion loop, reference encoding, cancel
 │   ├── unmask-schedule.js  # Diffusion unmasking schedule (port of OmniVoice)
 │   └── gpu-postprocess.js  # WebGPU compute shader for post-processing
-├── audio-postprocess.js    # Silence trim + click-free fades for chunk joins
+├── audio-postprocess.js    # Chunk joins, reference prep, trim selection helpers
 ├── duration-estimator.js   # Estimates output length from input text
 ├── sentence-buffer.js      # Abbreviation-aware sentence splitting
 ├── lib/

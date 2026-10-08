@@ -7,6 +7,8 @@
 import { toast, confirmDialog, isDialogOpen } from './ui-dialogs.js';
 import { StreamingPlayer, drawBarVisualizer, drawMiniWaveform } from './player.js';
 import { chunkText } from './text-chunker.js';
+import { TrimEditor } from './trim-editor.js';
+import { prepareReference, defaultSelection, REF_PREP_VERSION } from './audio-postprocess.js?v=2';
 
 const MODEL_BASE_URL = 'https://huggingface.co/Gigsu/vocoloco-onnx/resolve/main';
 // Local dev: a complete mirror in ./models (scripts/fetch-models.sh) replaces
@@ -106,7 +108,8 @@ const wizReviewWave = $('wiz-review-wave');
 const wizReviewPlay = $('wiz-review-play');
 const wizReviewDuration = $('wiz-review-duration');
 const wizReviewVerdict = $('wiz-review-verdict');
-const wizTruncateNote = $('wiz-truncate-note');
+const wizTrimOverview = $('wiz-trim-overview');
+const wizTrimInfo = $('wiz-trim-info');
 const wizTranscript = $('wiz-transcript');
 const wizTranscriptHint = $('wiz-transcript-hint');
 const wizVoiceName = $('wiz-voice-name');
@@ -288,15 +291,14 @@ async function clearVoicesStore() {
 
 // Persist freshly encoded tokens WITHOUT clobbering concurrent edits (e.g. a
 // rename committed while a slow CPU encode was running): re-fetch and merge.
-async function persistVoiceTokens(voiceId, tokens, tokenCount) {
+async function persistVoiceTokens(voiceId, tokens, tokenCount, extra = null) {
   const fresh = (await getSavedVoices()).find(v => v.id === voiceId);
   if (!fresh) return null; // deleted meanwhile
   const record = normalizeVoiceRecord(fresh);
-  record.tokens = tokens;
-  record.tokenCount = tokenCount;
+  Object.assign(record, extra, { tokens, tokenCount });
   await saveVoice(record);
   const cached = voicesCache.find(v => v.id === voiceId);
-  if (cached) { cached.tokens = tokens; cached.tokenCount = tokenCount; }
+  if (cached) Object.assign(cached, extra, { tokens, tokenCount });
   return record;
 }
 
@@ -356,15 +358,25 @@ function rejectPendingEncodes(reason) {
 // (background migration, voice selection, generate) share the same promise.
 const voiceEncodePromises = new Map(); // voiceId → Promise<voice>
 
+// Voices saved before reference prep v2 were cut right after the last loud
+// sample (often keeping the click of the stop button). Every chunk continues
+// from the end of the reference, so that edge came back as a small sound at
+// the start of each chunk. Such voices are re-prepared and re-encoded once.
+function needsRefPrep(voice) {
+  return !!voice.refAudio && (voice.refPrep || 1) < REF_PREP_VERSION;
+}
+
 function encodeVoiceShared(voice) {
   let p = voiceEncodePromises.get(voice.id);
   if (!p) {
     p = (async () => {
-      const r = await requestEncode(voice.refAudio);
+      const prep = needsRefPrep(voice);
+      const refAudio = prep ? prepareReference(voice.refAudio, 24000) : voice.refAudio;
+      const r = await requestEncode(refAudio);
       const tokens = r.tokens instanceof Int32Array ? r.tokens : new Int32Array(r.tokens);
-      await persistVoiceTokens(voice.id, tokens, r.tokenCount);
-      voice.tokens = tokens;
-      voice.tokenCount = r.tokenCount;
+      const extra = prep ? { refAudio, duration: refAudio.length / 24000, refPrep: REF_PREP_VERSION } : null;
+      await persistVoiceTokens(voice.id, tokens, r.tokenCount, extra);
+      Object.assign(voice, extra, { tokens, tokenCount: r.tokenCount });
       return voice;
     })();
     p.finally(() => voiceEncodePromises.delete(voice.id)).catch(() => {});
@@ -375,7 +387,7 @@ function encodeVoiceShared(voice) {
 
 // Lazy migration wrapper with guards (never during generation).
 async function ensureVoiceTokens(voice) {
-  if (!voice || voice.tokens || !isReady || !encoderAvailable || isGenerating) return;
+  if (!voice || (voice.tokens && !needsRefPrep(voice)) || !isReady || !encoderAvailable || isGenerating) return;
   try {
     await encodeVoiceShared(voice);
     if (currentView === 'voices') renderVoicesView();
@@ -387,7 +399,7 @@ async function ensureVoiceTokens(voice) {
 async function migrateVoicesInBackground() {
   for (const v of voicesCache) {
     if (isGenerating) return;
-    if (!v.tokens) await ensureVoiceTokens(v);
+    if (!v.tokens || needsRefPrep(v)) await ensureVoiceTokens(v);
   }
 }
 
@@ -932,31 +944,25 @@ downloadBtn.addEventListener('click', () => {
   if (lastPcm) downloadMp3(lastPcm, lastSampleRate, mp3Filename(lastText));
 });
 
-// Save the last generation as a reusable voice — routes into the wizard's
-// review step. Design-mode generations carry chunk 1's exact (pcm, text,
-// tokens) triple, so saving them needs no encoder run at all.
+// Save part of the last generation as a reusable voice — opens the wizard's
+// trim/review step on the whole generation with chunk 1 preselected (the
+// combined audio starts with chunk 1). Design-mode generations carry chunk
+// 1's exact (pcm, text, tokens) triple, so keeping that selection needs no
+// encoder run at all.
 saveGenVoiceBtn.addEventListener('click', () => {
   if (!lastPcm) return;
-  let preset;
+  const preset = {
+    source: 'generated',
+    pcm: new Float32Array(lastPcm),
+    transcript: lastText.replace(/ …$/, ''),
+  };
   if (lastGen && lastGen.first) {
-    preset = {
-      source: 'generated',
-      pcm: new Float32Array(lastGen.first.pcm),
-      duration: lastGen.first.pcm.length / 24000,
-      transcript: lastGen.first.text,
-    };
+    preset.selection = { start: 0, end: lastGen.first.pcm.length };
+    preset.transcript = lastGen.first.text;
     if (!lastGen.voiceName && lastGen.chainRef) {
       preset.tokens = lastGen.chainRef.tokens;
       preset.tokenCount = lastGen.chainRef.tokenCount;
     }
-  } else {
-    const capped = lastPcm.length > 15 * 24000 ? lastPcm.slice(0, 15 * 24000) : lastPcm;
-    preset = {
-      source: 'generated',
-      pcm: new Float32Array(capped),
-      duration: capped.length / 24000,
-      transcript: lastText,
-    };
   }
   switchView('voices');
   openVoiceWizard('review', preset);
@@ -1097,14 +1103,9 @@ async function decodeRefAudio(file) {
   src.buffer = buf;
   src.connect(offline.destination);
   src.start();
-  const pcm = (await offline.startRendering()).getChannelData(0);
-
-  // Trim silence from both ends (same logic as postProcessAudio in worker)
-  const thresh = 0.005, margin = Math.floor(24000 * 0.02);
-  let start = 0, end = pcm.length;
-  for (let i = 0; i < pcm.length; i++) if (Math.abs(pcm[i]) > thresh) { start = Math.max(0, i - margin); break; }
-  for (let i = pcm.length - 1; i >= 0; i--) if (Math.abs(pcm[i]) > thresh) { end = Math.min(pcm.length, i + margin); break; }
-  return pcm.slice(start, end);
+  // Untrimmed: the user picks the part in the trim editor, prepareReference()
+  // cleans the edges when the voice is saved
+  return (await offline.startRendering()).getChannelData(0);
 }
 
 // ─── Streaming generation ───────────────────────────────────────────────────
@@ -1190,13 +1191,15 @@ async function generate() {
   try {
     if (voice) {
       ref.refText = voice.refText;
-      if (voice.tokens) {
+      if (voice.tokens && !needsRefPrep(voice)) {
         ref.refTokens = voice.tokens;
       } else if (encoderAvailable) {
         setStatus('Encoding reference voice… (one-time per voice)');
         await encodeVoiceShared(voice); // shares any encode already in flight
         ref.refTokens = voice.tokens;
         if (currentView === 'voices') renderVoicesView();
+      } else if (voice.tokens) {
+        ref.refTokens = voice.tokens; // older reference prep, but no encoder on this device
       } else {
         toast(`"${voice.name}" isn't set up on this device (voice encoder unavailable) — generating with a default voice instead.`, { type: 'error', duration: 6000 });
         ref.refText = null;
@@ -1665,10 +1668,105 @@ const wiz = {
   stream: null, micCtx: null, srcNode: null, analyser: null, raf: 0,
   recorder: null, chunks: [], recStartTs: 0, recording: false, counting: false,
   levelRing: new Float32Array(100),
-  pcm: null, duration: 0, truncated: false,
-  presetTokens: null, presetTokenCount: 0,
+  sourcePcm: null,      // the full recording / upload / generation
+  sel: null,            // { start, end } in samples — the part used as the voice
+  pcm: null, duration: 0, // the selected part
+  presetTokens: null, presetTokenCount: 0, presetSel: null, // tokens only valid for presetSel
   savedVoiceId: null,
 };
+
+const MAX_SOURCE_S = 600; // longer files: only the first 10 minutes are loaded
+const MAX_REF_S = 15;     // longer references don't improve cloning, they only slow every step
+
+const trimEditor = wizReviewWave ? new TrimEditor({
+  canvas: wizReviewWave,
+  overviewCanvas: wizTrimOverview,
+  sampleRate: 24000,
+  minS: 3,
+  maxS: MAX_REF_S,
+  onChange: (sel, { final }) => onTrimChange(sel, final),
+}) : null;
+
+function fmtClock(s) {
+  return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
+}
+
+// New source audio for the review step; the selection defaults to the best
+// <= 15 s of speech (or `presetSel`, e.g. chunk 1 of a generation).
+function wizSetSource(pcm, presetSel = null) {
+  const cap = MAX_SOURCE_S * 24000;
+  if (pcm.length > cap) {
+    pcm = pcm.slice(0, cap);
+    toast('Only the first 10 minutes of this file were loaded.');
+  }
+  wiz.sourcePcm = pcm;
+  wiz.presetSel = presetSel;
+  wiz.sel = presetSel || defaultSelection(pcm, 24000, { minS: 3, maxS: MAX_REF_S });
+  wiz.pcm = pcm.slice(wiz.sel.start, wiz.sel.end);
+  wiz.duration = wiz.pcm.length / 24000;
+}
+
+function onTrimChange(sel, final) {
+  if (!wiz.sourcePcm) return;
+  wiz.sel = sel;
+  wiz.pcm = wiz.sourcePcm.slice(sel.start, sel.end);
+  wiz.duration = wiz.pcm.length / 24000;
+  stopReviewPreview();
+  updateReviewVerdict();
+  if (final) updateTrimInfo();
+}
+
+function updateTrimInfo() {
+  if (!wizTrimInfo || !wiz.sel || !wiz.sourcePcm) return;
+  const total = wiz.sourcePcm.length / 24000;
+  const range = `${fmtClock(wiz.sel.start / 24000)} – ${fmtClock(wiz.sel.end / 24000)} of ${fmtClock(total)}`;
+  wizTrimInfo.textContent = `${range} · Drag the green handles or the window to choose the part to clone (3–${MAX_REF_S} s)`;
+  const atPreset = wiz.presetSel && wiz.sel.start === wiz.presetSel.start && wiz.sel.end === wiz.presetSel.end;
+  if (wizTranscriptHint && trimEditor && !atPreset && trimEditor.cutsSpeech()) {
+    wizTranscriptHint.textContent = 'You trimmed the clip: the transcript must contain exactly the words spoken in the selected part.';
+  } else if (wizTranscriptHint) {
+    wizTranscriptHint.textContent = defaultTranscriptHint();
+  }
+}
+
+function defaultTranscriptHint() {
+  return wiz.source === 'recorded'
+    ? 'Pre-filled from your script. Fix any words you changed while reading.'
+    : wiz.source === 'uploaded'
+      ? 'Type the exact words spoken in the selected part — this noticeably improves cloning accuracy.'
+      : 'Pre-filled with the generated text.';
+}
+
+// Preview of the selection with a moving playhead
+let reviewPlayheadRaf = 0;
+
+function stopReviewPreview() {
+  if (previewBtn === wizReviewPlay && player.isOneShotPlaying()) player.stopOneShot();
+  cancelAnimationFrame(reviewPlayheadRaf);
+  reviewPlayheadRaf = 0;
+  if (trimEditor) trimEditor.setPlayhead(null);
+}
+
+function startReviewPlayhead() {
+  const ctx = player.getAudioCtx();
+  const t0 = ctx.currentTime;
+  const startSample = wiz.sel.start;
+  const tick = () => {
+    if (previewBtn !== wizReviewPlay || !player.isOneShotPlaying()) {
+      reviewPlayheadRaf = 0;
+      trimEditor.setPlayhead(null);
+      return;
+    }
+    trimEditor.setPlayhead(startSample + (ctx.currentTime - t0) * 24000);
+    reviewPlayheadRaf = requestAnimationFrame(tick);
+  };
+  cancelAnimationFrame(reviewPlayheadRaf);
+  reviewPlayheadRaf = requestAnimationFrame(tick);
+}
+
+window.addEventListener('resize', () => {
+  if (wiz.step === 'review' && trimEditor && wiz.sourcePcm) trimEditor.redraw();
+});
 
 const WIZ_TITLES = {
   method: 'New voice',
@@ -1687,11 +1785,14 @@ function wizReset() {
   wiz.scriptId = null;
   wiz.lang = null;
   wiz.scriptText = '';
+  stopReviewPreview();
+  wiz.sourcePcm = null;
+  wiz.sel = null;
   wiz.pcm = null;
   wiz.duration = 0;
-  wiz.truncated = false;
   wiz.presetTokens = null;
   wiz.presetTokenCount = 0;
+  wiz.presetSel = null;
   wiz.savedVoiceId = null;
   wiz.levelRing.fill(0);
   if (wizTranscript) wizTranscript.value = '';
@@ -1700,7 +1801,6 @@ function wizReset() {
   if (wizCustomWrap) wizCustomWrap.classList.add('hidden');
   if (wizUploadError) wizUploadError.classList.add('hidden');
   if (wizSaveBlocker) wizSaveBlocker.classList.add('hidden');
-  if (wizTruncateNote) wizTruncateNote.classList.add('hidden');
   if (wizSaveBtn) wizSaveBtn.disabled = false;
 }
 
@@ -1709,13 +1809,7 @@ function openVoiceWizard(startStep = 'method', preset = null) {
   wizReset();
   if (preset) {
     wiz.source = preset.source || 'generated';
-    wiz.pcm = preset.pcm || null;
-    wiz.truncated = false;
-    if (wiz.pcm && wiz.pcm.length > 15 * 24000 && !preset.tokens) {
-      wiz.pcm = wiz.pcm.slice(0, 15 * 24000);
-      wiz.truncated = true;
-    }
-    wiz.duration = wiz.pcm ? wiz.pcm.length / 24000 : 0;
+    if (preset.pcm) wizSetSource(preset.pcm, preset.selection || null);
     wiz.presetTokens = preset.tokens || null;
     wiz.presetTokenCount = preset.tokenCount || 0;
     if (wizTranscript) wizTranscript.value = preset.transcript || '';
@@ -1747,18 +1841,16 @@ function wizGoto(step) {
   if (step === 'record') startMicCheck(wiz.deviceId || undefined);
   if (step === 'review') {
     requestAnimationFrame(() => {
-      if (wiz.pcm) drawBarVisualizer(wizReviewWave, wiz.pcm);
+      if (wiz.sourcePcm && trimEditor) trimEditor.load(wiz.sourcePcm, wiz.sel);
     });
     updateReviewVerdict();
     wizReviewBack.textContent = wiz.source === 'recorded' ? '← Re-record'
       : wiz.source === 'uploaded' ? '← Choose another file'
       : 'Cancel';
-    wizTranscriptHint.textContent = wiz.source === 'recorded'
-      ? 'Pre-filled from your script. Fix any words you changed while reading.'
-      : wiz.source === 'uploaded'
-        ? 'Type the exact words spoken in the clip — this noticeably improves cloning accuracy.'
-        : 'Pre-filled with the generated text.';
+    wizTranscriptHint.textContent = defaultTranscriptHint();
     if (!wizVoiceName.value) wizVoiceName.focus({ preventScroll: true });
+  } else {
+    stopReviewPreview();
   }
 }
 
@@ -2135,15 +2227,9 @@ async function onWizRecordingStopped() {
     toast("Couldn't process the recording: " + e.message, { type: 'error' });
     return;
   }
-  wiz.truncated = false;
-  if (pcm.length > 15 * 24000) {
-    pcm = pcm.slice(0, 15 * 24000);
-    wiz.truncated = true;
-  }
-  wiz.pcm = pcm;
-  wiz.duration = pcm.length / 24000;
   wiz.source = 'recorded';
   wiz.presetTokens = null;
+  wizSetSource(pcm);
   wizTranscript.value = wiz.scriptText || '';
   wizGoto('review');
 }
@@ -2205,15 +2291,9 @@ async function handleWizFile(file) {
     showUploadError("Couldn't read this file. Use MP3, WAV, M4A, or OGG.");
     return;
   }
-  wiz.truncated = false;
-  if (pcm.length > 15 * 24000) {
-    pcm = pcm.slice(0, 15 * 24000);
-    wiz.truncated = true;
-  }
-  wiz.pcm = pcm;
-  wiz.duration = pcm.length / 24000;
   wiz.source = 'uploaded';
   wiz.presetTokens = null;
+  wizSetSource(pcm);
   wiz.scriptId = null;
   wiz.lang = null;
   wizTranscript.value = '';
@@ -2240,7 +2320,7 @@ function updateReviewVerdict() {
   const d = wiz.duration || 0;
   if (wizReviewDuration) wizReviewDuration.textContent = d.toFixed(1) + 's';
   let cls, label, blocker = null;
-  if (d < 3) { cls = 'bad'; label = 'Too short'; blocker = 'Too short to clone — record at least 3 seconds.'; }
+  if (d < 3) { cls = 'bad'; label = 'Too short'; blocker = 'Too short to clone — use at least 3 seconds of speech.'; }
   else if (d < 5) { cls = 'warn'; label = 'Usable'; }
   else if (d <= 12) { cls = 'good'; label = 'Good length'; }
   else { cls = 'warn'; label = 'Long'; }
@@ -2248,7 +2328,6 @@ function updateReviewVerdict() {
     wizReviewVerdict.className = 'verdict-chip ' + cls;
     wizReviewVerdict.textContent = label;
   }
-  if (wizTruncateNote) wizTruncateNote.classList.toggle('hidden', !wiz.truncated);
   if (wizSaveBtn) wizSaveBtn.disabled = d < 3;
   if (wizSaveBlocker) {
     if (blocker) { wizSaveBlocker.textContent = blocker; wizSaveBlocker.classList.remove('hidden'); }
@@ -2258,7 +2337,9 @@ function updateReviewVerdict() {
 
 if (wizReviewPlay) {
   wizReviewPlay.addEventListener('click', () => {
-    if (wiz.pcm) togglePcmPreview(wiz.pcm, wizReviewPlay);
+    if (!wiz.pcm) return;
+    togglePcmPreview(wiz.pcm, wizReviewPlay);
+    if (trimEditor && previewBtn === wizReviewPlay && player.isOneShotPlaying()) startReviewPlayhead();
   });
 }
 
@@ -2274,16 +2355,23 @@ async function wizSave() {
   }
   if (!wiz.pcm || wiz.duration < 3) { updateReviewVerdict(); return; }
   wizSaveBtn.disabled = true;
+  stopReviewPreview();
+
+  // Preset tokens (chunk 1 of a design-mode generation) only match their own selection
+  const keepTokens = !!(wiz.presetTokens && wiz.presetSel && wiz.sel
+    && wiz.sel.start === wiz.presetSel.start && wiz.sel.end === wiz.presetSel.end);
+  const refAudio = keepTokens ? wiz.pcm : prepareReference(wiz.pcm, 24000);
 
   const record = {
     id: 'v-' + Date.now(),
     version: 2,
     name,
-    refAudio: wiz.pcm,
+    refAudio,
     refText: wizTranscript.value.trim() || null,
-    tokens: wiz.presetTokens ? new Int32Array(wiz.presetTokens) : null,
-    tokenCount: wiz.presetTokens ? wiz.presetTokenCount : null,
-    duration: wiz.duration,
+    tokens: keepTokens ? new Int32Array(wiz.presetTokens) : null,
+    tokenCount: keepTokens ? wiz.presetTokenCount : null,
+    duration: refAudio.length / 24000,
+    refPrep: REF_PREP_VERSION,
     createdAt: Date.now(),
     scriptId: wiz.scriptId,
     lang: wiz.lang,
