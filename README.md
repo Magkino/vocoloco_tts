@@ -121,7 +121,9 @@ Once models are cached, no network requests are made during synthesis.
 ## License
 
 - **VocoLoco app**: [Apache License 2.0](LICENSE)
-- **ONNX models**: Apache 2.0, derived from [OmniVoice](https://github.com/k2-fsa/OmniVoice) by Xiaomi/k2-fsa
+- **ONNX models**: [CC BY-NC](https://huggingface.co/k2-fsa/OmniVoice#license) (non-commercial), converted to ONNX from the [OmniVoice](https://github.com/k2-fsa/OmniVoice) weights by Xiaomi/k2-fsa
+
+> **Licence history:** VocoLoco and its ONNX exports were created on 2026-04-09, when the OmniVoice model card listed the weights as Apache 2.0. On 2026-07-03 the OmniVoice authors relicensed the pre-trained model as CC BY-NC, citing their training data ([model card change](https://huggingface.co/k2-fsa/OmniVoice/commit/c5fdb5ccb189668d56333f77ba2629f4cd7535f4)). The weight files themselves were not changed. VocoLoco follows the current upstream licence.
 
 ## Attribution
 
