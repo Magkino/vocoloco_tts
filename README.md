@@ -64,11 +64,17 @@ vocoloco_tts/
 ├── ui-dialogs.js           # Toasts and confirm dialogs (replaces native dialogs)
 ├── workers/
 │   ├── tts-worker.js       # ONNX inference, diffusion loop, reference encoding, cancel
+│   ├── unmask-schedule.js  # Diffusion unmasking schedule (port of OmniVoice)
 │   └── gpu-postprocess.js  # WebGPU compute shader for post-processing
+├── audio-postprocess.js    # Silence trim + click-free fades for chunk joins
 ├── duration-estimator.js   # Estimates output length from input text
 ├── sentence-buffer.js      # Abbreviation-aware sentence splitting
 ├── lib/
 │   └── lamejs.min.js       # MP3 encoder (self-hosted)
+├── tests/                  # Unit tests (node:test, run in Docker)
+├── scripts/
+│   └── fetch-models.sh     # Mirror the models into models/ for local dev
+├── docker-compose.yml      # Local dev server + test container
 ├── tailwind.css            # Pre-built Tailwind CSS
 ├── tailwind.config.js      # Tailwind config (for rebuilds)
 └── build-tailwind.sh       # Rebuild CSS via Docker
@@ -78,10 +84,25 @@ vocoloco_tts/
 
 The project is vanilla JavaScript with no build step required. Tailwind CSS is pre-built and committed.
 
-**Serve locally:**
+Everything runs in Docker, no local Node or Python needed.
+
+**Serve locally** (edits sync into the container, open http://localhost:8090):
 
 ```bash
-python3 -m http.server 8080
+docker compose up --watch web
+```
+
+**Local model mirror** (recommended): download the models once into `models/` (git-ignored). On localhost the app then loads them from the dev server instead of re-downloading ~3 GB on every reload:
+
+```bash
+docker run --rm -v "$PWD":/src -w /src curlimages/curl sh scripts/fetch-models.sh
+docker compose up --build --watch web
+```
+
+**Run the unit tests:**
+
+```bash
+docker compose run --rm --build dev node --test
 ```
 
 **Rebuild Tailwind CSS** (after changing HTML classes):
@@ -93,7 +114,7 @@ docker run --rm -v "$(pwd)":/src node:20-slim sh /src/build-tailwind.sh
 **Force CPU mode** (for testing):
 
 ```
-http://localhost:8080?cpu
+http://localhost:8090?cpu
 ```
 
 ## EU AI Act Compliance

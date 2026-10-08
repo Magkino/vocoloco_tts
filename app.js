@@ -9,7 +9,12 @@ import { StreamingPlayer, drawBarVisualizer, drawMiniWaveform } from './player.j
 import { chunkText } from './text-chunker.js';
 
 const MODEL_BASE_URL = 'https://huggingface.co/Gigsu/vocoloco-onnx/resolve/main';
+// Local dev: a complete mirror in ./models (scripts/fetch-models.sh) replaces
+// Hugging Face, so reloads don't re-download ~3 GB. Never used in production.
+const LOCAL_MODEL_URL = new URL('models', location.href).href;
 const MAX_TEXT_LEN = 2000;
+// OmniVoice's sampling defaults (num_step comes from the quality toggle)
+const GEN_PARAMS = { guidanceScale: 2.0, tShift: 0.1 };
 
 // ─── Guided recording scripts ───────────────────────────────────────────────
 // Reading one of these aloud makes the transcript exact by construction.
@@ -681,7 +686,7 @@ function sendJob(msg) {
 function initWorker() {
   rejectPendingEncodes('Engine restarted');
   resolveJob({ kind: 'cancelled' });
-  ttsWorker = new Worker('workers/tts-worker.js?v=4', { type: 'module' });
+  ttsWorker = new Worker('workers/tts-worker.js?v=5', { type: 'module' });
   ttsWorker.onerror = (e) => {
     console.error('Worker error:', e);
     setStatus('Engine failed to load — check the console and reload the page.');
@@ -743,8 +748,31 @@ function initWorker() {
         break;
     }
   };
-  ttsWorker.postMessage({ type: 'init', modelBaseUrl: MODEL_BASE_URL, forceCPU: location.search.includes('cpu') });
+  const worker = ttsWorker;
+  resolveModelBaseUrl().then((modelBaseUrl) => {
+    worker.postMessage({ type: 'init', modelBaseUrl, forceCPU: location.search.includes('cpu') });
+  });
   showProgress('indeterminate');
+}
+
+let modelBaseUrlPromise = null;
+
+function resolveModelBaseUrl() {
+  if (!modelBaseUrlPromise) {
+    modelBaseUrlPromise = (async () => {
+      if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return MODEL_BASE_URL;
+      try {
+        // The fetch script writes the manifest last, so its presence means the mirror is complete
+        const r = await fetch(`${LOCAL_MODEL_URL}/omnivoice-main-manifest.json`, { method: 'HEAD' });
+        if (r.ok) {
+          console.log(`[init] Using local model mirror: ${LOCAL_MODEL_URL}`);
+          return LOCAL_MODEL_URL;
+        }
+      } catch { /* no mirror */ }
+      return MODEL_BASE_URL;
+    })();
+  }
+  return modelBaseUrlPromise;
 }
 
 // ─── Player ─────────────────────────────────────────────────────────────────
@@ -1220,8 +1248,7 @@ function buildChunkMsg(i, ref) {
     text: s.chunks[i].text,
     lang: null,
     numStep: s.quality,
-    guidanceScale: 3.0,
-    tShift: 0.05,
+    ...GEN_PARAMS,
     speed: 1.0,
     seed: null,
     instruct: null,
@@ -1245,6 +1272,13 @@ function buildChunkMsg(i, ref) {
   return msg;
 }
 
+// Silence between chunks. Pauses after a full stop inside generated chunks
+// measure ~0.4-0.75 s (each chunk also keeps up to 100 ms of its own
+// lead/tail); a chunk split mid-sentence only gets a comma-length pause.
+function joinPauseSeconds(prevText) {
+  return /[.!?…。！？]["'”’)\]]*$/.test(prevText.trim()) ? 0.4 : 0.15;
+}
+
 function onChunkAudio(i, res) {
   const s = stream;
   const pcm = res.pcm; // transferred — ours to mutate
@@ -1263,7 +1297,7 @@ function onChunkAudio(i, res) {
     }
     enablePlayerControls();
   }
-  player.appendChunk(pcm);
+  player.appendChunk(pcm, i > 0 ? joinPauseSeconds(s.chunks[i - 1].text) : 0);
   s.results.push({ text: s.chunks[i].text, pcm });
   s.doneTokens += s.chunks[i].estTokens;
 }
@@ -1399,8 +1433,7 @@ async function testVoice(voice, btn) {
     text,
     lang: null,
     numStep: 8, // fast — this is a preview
-    guidanceScale: 3.0,
-    tShift: 0.05,
+    ...GEN_PARAMS,
     speed: 1.0,
     instruct: null,
     seed: null,

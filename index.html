@@ -872,6 +872,17 @@
       <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
         <div>
           <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.2.1</span>
+            <span class="text-[10px] text-omni-text-muted/40">Oct 9, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>Smoother joins between the parts of long texts: no clicks, natural sentence pauses</li>
+            <li>Fixed the unmasking schedule to match OmniVoice: cleaner audio, especially in Fast mode</li>
+            <li>Generation settings aligned with OmniVoice's defaults</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
+          <div class="flex items-center gap-2 mb-1">
             <span class="text-[11px] font-bold text-omni-neon">v1.2.0</span>
             <span class="text-[10px] text-omni-text-muted/40">Jul 2, 2026</span>
           </div>
@@ -958,7 +969,7 @@
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px]">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.2.0</button>
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.2.1</button>
   </div>
 
 
@@ -970,7 +981,7 @@
   });
 
   // Changelog toggle
-  const CURRENT_VERSION = 'v1.2.0';
+  const CURRENT_VERSION = 'v1.2.1';
   document.getElementById('version-btn').textContent = CURRENT_VERSION;
   const changelogPanel = document.getElementById('changelog-panel');
   function toggleChangelog(show) {
@@ -1075,7 +1086,7 @@
   lame.onload = () => {
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = 'app.js?v=6';
+    s.src = 'app.js?v=7';
     document.body.appendChild(s);
   };
   lame.onerror = () => {

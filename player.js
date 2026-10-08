@@ -175,16 +175,19 @@ export class StreamingPlayer {
     }, 400);
   }
 
-  appendChunk(pcm) {
+  /** Append a chunk, preceded by `gapSeconds` of silence (default: the constructor's gap). */
+  appendChunk(pcm, gapSeconds = null) {
     if (!this._streaming) return;
-    if (this._generated > 0) this._appendToCombined(new Float32Array(this.gapSamples));
+    const gap = this._generated === 0 ? 0
+      : (gapSeconds == null ? this.gapSamples : Math.round(gapSeconds * this.sr));
+    if (gap > 0) this._appendToCombined(new Float32Array(gap));
     const sampleStart = this._generated;
     this._appendToCombined(pcm);
     if (this._playing) {
       const ctx = this.getAudioCtx();
-      const startAt = Math.max(ctx.currentTime + 0.02, this._nextCtxTime);
+      const startAt = Math.max(ctx.currentTime + 0.02, this._nextCtxTime + gap / this.sr);
       this._scheduleSpan(pcm, sampleStart, startAt);
-      this._nextCtxTime = startAt + pcm.length / this.sr + this.gapSamples / this.sr;
+      this._nextCtxTime = startAt + pcm.length / this.sr; // end of scheduled audio, gap excluded
     }
     this._drawWave();
   }
@@ -248,7 +251,7 @@ export class StreamingPlayer {
     const ctx = this.getAudioCtx();
     const startAt = ctx.currentTime + 0.02;
     this._scheduleSpan(this._combined.subarray(target, this._generated), target, startAt);
-    this._nextCtxTime = startAt + (this._generated - target) / this.sr + this.gapSamples / this.sr;
+    this._nextCtxTime = startAt + (this._generated - target) / this.sr;
     this._playing = true;
     this._lastSample = target;
     if (this.playheadEl) this.playheadEl.classList.remove('hidden');

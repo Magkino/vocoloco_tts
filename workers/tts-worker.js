@@ -6,7 +6,10 @@
 import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.all.mjs';
 import { AutoTokenizer, env as tfEnv } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/dist/transformers.min.js';
 import { estimateTargetTokens } from '../duration-estimator.js';
+import { addEndPunctuation } from '../sentence-buffer.js?v=2'; // ?v: a stale cached copy lacks this export
+import { trimAndFade, peakAbs } from '../audio-postprocess.js';
 import { GpuPostProcessor } from './gpu-postprocess.js';
+import { unmaskSchedule } from './unmask-schedule.js';
 
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
 
@@ -93,18 +96,6 @@ async function fetchWithProgress(url, onProgress, onCached) {
 
 function T(type, data, dims) { return new ort.Tensor(type, data, dims); }
 
-// ─── Time steps (port of _get_time_steps) ───────────────────────────────────
-
-function getTimeSteps(tStart, tEnd, numStep, tShift) {
-  const steps = [];
-  for (let i = 0; i <= numStep; i++) {
-    let t = tStart + (tEnd - tStart) * (i / numStep);
-    t = tShift * t / (1 + (tShift - 1) * t);
-    steps.push(t);
-  }
-  return steps;
-}
-
 // ─── Log-softmax over a slice of a Float32Array ─────────────────────────────
 
 // ─── Seeded PRNG (mulberry32) for deterministic generation ──────────────────
@@ -180,7 +171,7 @@ async function prepareInferenceInputs(text, numTargetTokens, tok, cfg, opts = {}
   styleText += `<|instruct_start|>${instruct || 'None'}<|instruct_end|>`;
 
   // Build text string
-  let fullText = refText ? refText.trim() + ' ' + text.trim() : text.trim();
+  let fullText = refText ? addEndPunctuation(refText) + ' ' + text.trim() : text.trim();
   fullText = fullText.replace(/[\r\n]+/g, '').replace(/[ \t]+/g, ' ');
   const wrappedText = `<|text_start|>${fullText}<|text_end|>`;
 
@@ -293,16 +284,7 @@ async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layer
   const tokens = new BigInt64Array(C * numTargetTokens).fill(BigInt(maskId));
   pred_buf = null; scores_buf = null;
 
-  // Unmasking schedule
-  // Python passes num_step+1 to _get_time_steps which creates linspace(0,1,num_step+2)
-  const timesteps = getTimeSteps(0, 1, numStep + 1, tShift);
-  const totalMask = numTargetTokens * C;
-  let rem = totalMask;
-  const sched = [];
-  for (let s = 0; s < numStep; s++) {
-    const n = s === numStep - 1 ? rem : Math.min(Math.ceil(totalMask * (timesteps[s + 1] - timesteps[s])), rem);
-    sched.push(n); rem -= n;
-  }
+  const sched = unmaskSchedule(numTargetTokens * C, numStep, tShift);
 
   if (gpuPostProc) {
     try { gpuPostProc.prepare(C, maxLen, V, numTargetTokens); }
@@ -419,13 +401,8 @@ async function decodeTokens(tokens, C, T) {
 }
 
 function postProcessAudio(pcm, sr, normalize = true) {
-  const thresh = 0.005, margin = Math.floor(sr * 0.02);
-  let start = 0, end = pcm.length;
-  for (let i = 0; i < pcm.length; i++) if (Math.abs(pcm[i]) > thresh) { start = Math.max(0, i - margin); break; }
-  for (let i = pcm.length - 1; i >= 0; i--) if (Math.abs(pcm[i]) > thresh) { end = Math.min(pcm.length, i + margin); break; }
-  const out = pcm.slice(start, end);
-  let peak = 0;
-  for (let i = 0; i < out.length; i++) { const a = Math.abs(out[i]); if (a > peak) peak = a; }
+  const out = trimAndFade(pcm, sr).pcm;
+  let peak = peakAbs(out);
   if (normalize && peak > 1e-6) {
     const s = 0.5 / peak;
     for (let i = 0; i < out.length; i++) out[i] *= s;
@@ -693,7 +670,7 @@ async function synthesize(params) {
     jobId = null,
     text, lang = null, refAudio = null, refText = null, refTokens = null,
     instruct = null,
-    numStep = 20, guidanceScale = 4.0, tShift = 0.05, speed = 1.0,
+    numStep = 32, guidanceScale = 2.0, tShift = 0.1, speed = 1.0, // OmniVoice defaults
     seed = null,
     returnTokens = false, normalize = true,
   } = params;

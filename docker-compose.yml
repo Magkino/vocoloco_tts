@@ -1,0 +1,38 @@
+# Local development: everything runs in containers. No bind mounts, so it
+# works without Docker Desktop file sharing for this folder.
+#   docker compose up --watch web                    → http://localhost:8090
+#   docker compose run --rm --build dev node --test  → unit tests
+# Model files mirrored into ./models (git-ignored, see README) are served at
+# /models, and the app uses them instead of Hugging Face on localhost.
+services:
+  web:
+    network_mode: bridge # default bridge, no per-project network needed
+    build:
+      context: .
+      dockerfile_inline: |
+        # syntax=docker/dockerfile:1
+        FROM nginx:1.27-alpine
+        RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  add_header Cache-Control "no-store";\n}\n' > /etc/nginx/conf.d/default.conf
+        # Separate layer: code edits don't re-copy the ~3 GB of models
+        COPY models/ /usr/share/nginx/html/models/
+        COPY --exclude=models . /usr/share/nginx/html
+    ports:
+      - "8090:80"
+    develop:
+      watch:
+        - action: sync
+          path: .
+          target: /usr/share/nginx/html
+          ignore:
+            - models/
+
+  dev:
+    network_mode: bridge
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile_inline: |
+        # syntax=docker/dockerfile:1
+        FROM node:22-slim
+        WORKDIR /src
+        COPY --exclude=models . .

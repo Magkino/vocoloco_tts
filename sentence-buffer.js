@@ -22,6 +22,16 @@ const MD_PATTERNS = [
   [/`(.+?)`/g, '$1'],
 ];
 
+// Port of OmniVoice's add_punctuation: a reference transcript must end in
+// punctuation, otherwise the model runs it straight into the target text.
+const END_PUNCTUATION = new Set(';:,.!?…)]}"\'“”‘’；：，。！？、）】');
+
+export function addEndPunctuation(text) {
+  const t = String(text || '').trim();
+  if (!t || END_PUNCTUATION.has(t[t.length - 1])) return t;
+  return t + (/[\u4e00-\u9fff]/.test(t) ? '。' : '.');
+}
+
 function cleanForTts(text) {
   for (const [pat, repl] of MD_PATTERNS) {
     text = text.replace(pat, repl);
