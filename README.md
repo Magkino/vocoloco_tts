@@ -17,7 +17,8 @@ VocoLoco uses WebGPU and WebAssembly to run a 600M-parameter diffusion TTS model
 - **Streamed generation**: long texts (up to 2000 characters) are split into sentences and start playing within seconds
 - **Voice design**: control gender and pitch with simple toggles, lock a voice you like for reuse
 - **Guided voice cloning**: a step-by-step wizard with curated reading scripts (the transcript fills itself in), live level meter, and instant voice testing
-- **Trim editor**: upload or record longer audio (or use any part of a generation) and pick exactly the 3-15 s to clone, with snap-to-pause handles and a preview playhead
+- **Trim editor**: upload or record long audio (or use any part of a generation) and pick exactly the 3-30 s to clone; a new selection snaps to pauses, the handles then move freely. Preview playhead included
+- **Automatic transcription**: Whisper large-v3-turbo transcribes the selected part on your device (~100 languages, language detected automatically, 0.5 GB on first use)
 - **Saved voices**: cloned voices are analyzed once and cached locally, so generation with them starts fast
 - **Generation library**: replay, reuse, delete, and download past generations as MP3 with AI-provenance metadata
 - **GPU-accelerated**: WebGPU for model inference, with a custom compute shader for post-processing
@@ -30,7 +31,7 @@ VocoLoco uses WebGPU and WebAssembly to run a 600M-parameter diffusion TTS model
 |---|---|
 | **Browser** | Chrome 113+ or Edge 113+ (WebGPU required for full speed) |
 | **GPU** | Dedicated GPU with WebGPU support recommended |
-| **Storage** | ~3 GB for cached models (one-time download) |
+| **Storage** | ~2.5 GB for cached models (one-time download), +0.65 GB for voice cloning, +0.5 GB for automatic transcription |
 | **Fallback** | Firefox and non-WebGPU browsers work via WASM (significantly slower) |
 
 ## How It Works
@@ -49,10 +50,11 @@ VocoLoco runs [OmniVoice](https://github.com/k2-fsa/OmniVoice), a diffusion-base
 |---|---|---|
 | Main model | 2.3 GB (sharded) | Qwen3-0.6B backbone, iterative diffusion transformer |
 | Audio decoder | 83 MB | HiggsAudioV2, token-to-waveform |
-| Audio encoder | 624 MB | HiggsAudioV2, waveform-to-token (voice cloning) |
+| Audio encoder | 624 MB | HiggsAudioV2, waveform-to-token (voice cloning, loaded on first use) |
+| Speech recognition | 536 MB | Whisper large-v3-turbo, 4-bit ONNX ([onnx-community](https://huggingface.co/onnx-community/whisper-large-v3-turbo)), loaded on first use |
 | Tokenizer | ~2 MB | Qwen2 BPE (loaded via transformers.js) |
 
-Models are hosted on [Hugging Face](https://huggingface.co/Gigsu/vocoloco-onnx) and cached in the browser after first download.
+Models are hosted on [Hugging Face](https://huggingface.co/Gigsu/vocoloco-onnx) and cached in the browser after first download. Large files are fetched as parallel 32 MB ranges, so the first download is fast and resumes after an interruption.
 
 ## Project Structure
 
@@ -66,6 +68,8 @@ vocoloco_tts/
 ├── trim-editor.js          # Pick the part of a longer clip to use as a voice reference
 ├── workers/
 │   ├── tts-worker.js       # ONNX inference, diffusion loop, reference encoding, cancel
+│   ├── asr-worker.js       # Whisper transcription for the voice wizard
+│   ├── model-files.js      # Parallel ranged downloads + Cache API storage
 │   ├── unmask-schedule.js  # Diffusion unmasking schedule (port of OmniVoice)
 │   └── gpu-postprocess.js  # WebGPU compute shader for post-processing
 ├── audio-postprocess.js    # Chunk joins, reference prep, trim selection helpers
@@ -73,7 +77,7 @@ vocoloco_tts/
 ├── sentence-buffer.js      # Abbreviation-aware sentence splitting
 ├── lib/
 │   └── lamejs.min.js       # MP3 encoder (self-hosted)
-├── tests/                  # Unit tests (node:test, run in Docker)
+├── tests/                  # Unit tests (node:test, run in Docker); tests/browser: A/B + parity harnesses
 ├── scripts/
 │   └── fetch-models.sh     # Mirror the models into models/ for local dev
 ├── docker-compose.yml      # Local dev server + test container
@@ -94,7 +98,7 @@ Everything runs in Docker, no local Node or Python needed.
 docker compose up --watch web
 ```
 
-**Local model mirror** (recommended): download the models once into `models/` (git-ignored). On localhost the app then loads them from the dev server instead of re-downloading ~3 GB on every reload:
+**Local model mirror** (recommended): download the models once into `models/` (git-ignored). On localhost the app then loads them from the dev server instead of re-downloading ~3.5 GB on every reload:
 
 ```bash
 docker run --rm -v "$PWD":/src -w /src curlimages/curl sh scripts/fetch-models.sh
@@ -135,7 +139,7 @@ All synthesis runs locally, but the app fetches resources from external services
 
 | Service | Purpose | When |
 |---|---|---|
-| [Hugging Face](https://huggingface.co/Gigsu/vocoloco-onnx) | Model weights (~3 GB) | First use / after cache clear |
+| [Hugging Face](https://huggingface.co/Gigsu/vocoloco-onnx) | Model weights (~2.5 GB; encoder and speech recognizer on first use) | First use / after cache clear |
 | [jsDelivr](https://www.jsdelivr.com/) | ONNX Runtime + transformers.js | First use / after cache clear |
 | [GitHub Pages](https://pages.github.com/) | Hosting the app itself | Every visit |
 
@@ -145,12 +149,13 @@ Once models are cached, no network requests are made during synthesis.
 
 - **VocoLoco app**: [Apache License 2.0](LICENSE)
 - **ONNX models**: [CC BY-NC](https://huggingface.co/k2-fsa/OmniVoice#license) (non-commercial), converted to ONNX from the [OmniVoice](https://github.com/k2-fsa/OmniVoice) weights by Xiaomi/k2-fsa
+- **Speech recognition**: [Whisper large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) by OpenAI (MIT), ONNX conversion by [onnx-community](https://huggingface.co/onnx-community/whisper-large-v3-turbo)
 
 > **Licence history:** VocoLoco and its ONNX exports were created on 2026-04-09, when the OmniVoice model card listed the weights as Apache 2.0. On 2026-07-03 the OmniVoice authors relicensed the pre-trained model as CC BY-NC, citing their training data ([model card change](https://huggingface.co/k2-fsa/OmniVoice/commit/c5fdb5ccb189668d56333f77ba2629f4cd7535f4)). The weight files themselves were not changed. VocoLoco follows the current upstream licence.
 
 ## Attribution
 
-Built on [OmniVoice](https://github.com/k2-fsa/OmniVoice) by Xiaomi Corp (k2-fsa). Uses [ONNX Runtime Web](https://onnxruntime.ai/) by Microsoft. MP3 encoding by [lamejs](https://github.com/zhuker/lamejs).
+Built on [OmniVoice](https://github.com/k2-fsa/OmniVoice) by Xiaomi Corp (k2-fsa). Uses [ONNX Runtime Web](https://onnxruntime.ai/) by Microsoft, [Transformers.js](https://huggingface.co/docs/transformers.js) by Hugging Face and [Whisper](https://github.com/openai/whisper) by OpenAI. MP3 encoding by [lamejs](https://github.com/zhuker/lamejs).
 
 ## Contributing
 

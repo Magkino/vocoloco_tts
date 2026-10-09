@@ -6,8 +6,8 @@
 
 import { toast, confirmDialog, isDialogOpen } from './ui-dialogs.js';
 import { StreamingPlayer, drawBarVisualizer, drawMiniWaveform } from './player.js';
-import { chunkText } from './text-chunker.js';
-import { TrimEditor } from './trim-editor.js';
+import { chunkText } from './text-chunker.js?v=2';
+import { TrimEditor } from './trim-editor.js?v=2';
 import { prepareReference, defaultSelection, REF_PREP_VERSION } from './audio-postprocess.js?v=2';
 
 const MODEL_BASE_URL = 'https://huggingface.co/Gigsu/vocoloco-onnx/resolve/main';
@@ -112,6 +112,8 @@ const wizTrimOverview = $('wiz-trim-overview');
 const wizTrimInfo = $('wiz-trim-info');
 const wizTranscript = $('wiz-transcript');
 const wizTranscriptHint = $('wiz-transcript-hint');
+const wizAsrBtn = $('wiz-asr-btn');
+const wizAsrLabel = $('wiz-asr-label');
 const wizVoiceName = $('wiz-voice-name');
 const wizReviewBack = $('wiz-review-back');
 const wizSaveBtn = $('wiz-save-btn');
@@ -139,7 +141,7 @@ let currentView = 'studio';
 // Streaming generation state
 let stream = null;
 let streamCounter = 0;
-let sessionChainRef = null; // { tokens, tokenCount, text, pcm } from the last design-mode generation
+let sessionChainRef = null; // { tokens, tokenCount, rateTokens, text, pcm } from the last design-mode generation
 let voiceLocked = false;
 let lastGen = null;         // { voiceName, first: { pcm, text }, chainRef }
 
@@ -564,7 +566,7 @@ function onDownloadPlan(msg) {
   if (msg.filesToDownload > 0) {
     if (msg.firstRun) {
       loadingTitle.textContent = 'First-time setup';
-      loadingSub.textContent = 'VocoLoco runs a 600M-parameter AI voice model directly in your browser — nothing you type or generate ever leaves your device. The model (~3 GB) downloads once and is stored locally for instant starts next time. Keep this tab open; this can take a few minutes.';
+      loadingSub.textContent = 'VocoLoco runs a 600M-parameter AI voice model directly in your browser — nothing you type or generate ever leaves your device. The model (~2.4 GB) downloads once and is stored locally for instant starts next time. Keep this tab open; this can take a few minutes.';
     } else {
       loadingTitle.textContent = 'Resuming download';
       loadingSub.textContent = msg.cachedBytes > 0
@@ -630,6 +632,12 @@ function onLoadingPhase(msg) {
   } else {
     setStatus(msg.detail || 'Loading…');
   }
+}
+
+// The voice encoder downloads on first use (cloning), not with the main model
+function onEncoderDownload(msg) {
+  if (wiz.step === 'saving' && wizSavingStatus) wizSavingStatus.textContent = msg.done ? 'Analyzing voice… (one-time setup)' : msg.detail;
+  if (!isGenerating) setStatus(msg.done ? 'Ready' : msg.detail);
 }
 
 // ─── Ready handler ──────────────────────────────────────────────────────────
@@ -698,7 +706,7 @@ function sendJob(msg) {
 function initWorker() {
   rejectPendingEncodes('Engine restarted');
   resolveJob({ kind: 'cancelled' });
-  ttsWorker = new Worker('workers/tts-worker.js?v=5', { type: 'module' });
+  ttsWorker = new Worker('workers/tts-worker.js?v=7', { type: 'module' });
   ttsWorker.onerror = (e) => {
     console.error('Worker error:', e);
     setStatus('Engine failed to load — check the console and reload the page.');
@@ -721,14 +729,19 @@ function initWorker() {
         else if (msg.stage === 'loading') onLoadingPhase(msg);
         else if (msg.stage === 'generating') onGenProgress(msg);
         else if (msg.stage === 'warning') toast(msg.detail, { type: 'error', duration: 6000 });
+        else if (msg.stage === 'encoder-download') onEncoderDownload(msg);
         else setStatus(msg.detail || '');
         break;
       case 'ready':
         encoderAvailable = msg.encoderAvailable !== false;
         onReady(msg.backend);
         break;
+      case 'encoder-status':
+        encoderAvailable = msg.available;
+        if (currentView === 'voices') renderVoicesView();
+        break;
       case 'audio':
-        resolveJob({ kind: 'audio', pcm: msg.pcm, sampleRate: msg.sampleRate, peak: msg.peak, tokens: msg.tokens || null, tokenCount: msg.tokenCount || 0 });
+        resolveJob({ kind: 'audio', pcm: msg.pcm, sampleRate: msg.sampleRate, peak: msg.peak, tokens: msg.tokens || null, tokenCount: msg.tokenCount || 0, rateTokens: msg.rateTokens ?? null });
         break;
       case 'cancelled':
         resolveJob({ kind: 'cancelled' });
@@ -1097,7 +1110,8 @@ function updateLibraryBadge() {
 async function decodeRefAudio(file) {
   const ctx = player.getAudioCtx();
   const buf = await ctx.decodeAudioData(await file.arrayBuffer());
-  const numSamples = Math.round(buf.duration * 24000);
+  // Resample no more than wizSetSource keeps (+1 s so it can tell the file was cut)
+  const numSamples = Math.round(Math.min(buf.duration, MAX_SOURCE_S + 1) * 24000);
   const offline = new OfflineAudioContext(1, numSamples, 24000);
   const src = offline.createBufferSource();
   src.buffer = buf;
@@ -1187,7 +1201,7 @@ async function generate() {
   };
 
   // Resolve the voice reference ONCE for the whole stream
-  const ref = { refTokens: null, refText: null, instruct: null };
+  const ref = { refTokens: null, refText: null, refRateTokens: null, instruct: null };
   try {
     if (voice) {
       ref.refText = voice.refText;
@@ -1207,6 +1221,7 @@ async function generate() {
     } else if (voiceLocked && sessionChainRef) {
       ref.refTokens = sessionChainRef.tokens;
       ref.refText = sessionChainRef.text;
+      ref.refRateTokens = sessionChainRef.rateTokens ?? null;
     } else {
       ref.instruct = buildInstruct();
     }
@@ -1261,6 +1276,7 @@ function buildChunkMsg(i, ref) {
     // Cloned / locked voice: same reference for every chunk
     msg.refTokens = new Int32Array(ref.refTokens); // copy — cached buffer must survive transfer
     msg.refText = ref.refText;
+    msg.refRateTokens = ref.refRateTokens; // locked voice: chunk 1 count without headroom
   } else if (i === 0) {
     // Design mode, first chunk: let the model pick a voice, capture its tokens
     msg.instruct = ref.instruct;
@@ -1269,6 +1285,7 @@ function buildChunkMsg(i, ref) {
     // Design mode, later chunks: chain chunk 1's voice
     msg.refTokens = new Int32Array(s.chainRef.tokens);
     msg.refText = s.chainRef.text;
+    msg.refRateTokens = s.chainRef.rateTokens ?? null;
   } else {
     msg.instruct = ref.instruct;
   }
@@ -1296,7 +1313,8 @@ function onChunkAudio(i, res) {
     if (currentView !== 'studio') switchView('studio');
     player.beginStream({ estTotalSamples: Math.round((s.totalTokens / 25) * 24000) });
     if (res.tokens) {
-      s.chainRef = { tokens: res.tokens, tokenCount: res.tokenCount, text: s.chunks[0].text };
+      // rateTokens: without the worker's headroom, for the following chunks' estimate
+      s.chainRef = { tokens: res.tokens, tokenCount: res.tokenCount, rateTokens: res.rateTokens, text: s.chunks[0].text };
     }
     enablePlayerControls();
   }
@@ -1675,8 +1693,10 @@ const wiz = {
   savedVoiceId: null,
 };
 
-const MAX_SOURCE_S = 600; // longer files: only the first 10 minutes are loaded
-const MAX_REF_S = 15;     // longer references don't improve cloning, they only slow every step
+const MAX_SOURCE_S = 1800; // longer files: only the first 30 minutes are kept
+const MAX_REF_S = 30;     // longest selectable reference: it runs through every generation step,
+                          // so longer references make generation slower
+const DEFAULT_REF_S = 15; // the automatic selection keeps the faster length
 
 const trimEditor = wizReviewWave ? new TrimEditor({
   canvas: wizReviewWave,
@@ -1692,16 +1712,16 @@ function fmtClock(s) {
 }
 
 // New source audio for the review step; the selection defaults to the best
-// <= 15 s of speech (or `presetSel`, e.g. chunk 1 of a generation).
+// <= DEFAULT_REF_S of speech (or `presetSel`, e.g. chunk 1 of a generation).
 function wizSetSource(pcm, presetSel = null) {
   const cap = MAX_SOURCE_S * 24000;
   if (pcm.length > cap) {
     pcm = pcm.slice(0, cap);
-    toast('Only the first 10 minutes of this file were loaded.');
+    toast('This file is longer than 30 minutes — only the first 30 minutes were loaded.');
   }
   wiz.sourcePcm = pcm;
   wiz.presetSel = presetSel;
-  wiz.sel = presetSel || defaultSelection(pcm, 24000, { minS: 3, maxS: MAX_REF_S });
+  wiz.sel = presetSel || defaultSelection(pcm, 24000, { minS: 3, maxS: DEFAULT_REF_S });
   wiz.pcm = pcm.slice(wiz.sel.start, wiz.sel.end);
   wiz.duration = wiz.pcm.length / 24000;
 }
@@ -1713,7 +1733,7 @@ function onTrimChange(sel, final) {
   wiz.duration = wiz.pcm.length / 24000;
   stopReviewPreview();
   updateReviewVerdict();
-  if (final) updateTrimInfo();
+  if (final) { updateTrimInfo(); updateAsrButton(); }
 }
 
 function updateTrimInfo() {
@@ -1721,10 +1741,22 @@ function updateTrimInfo() {
   const total = wiz.sourcePcm.length / 24000;
   const range = `${fmtClock(wiz.sel.start / 24000)} – ${fmtClock(wiz.sel.end / 24000)} of ${fmtClock(total)}`;
   wizTrimInfo.textContent = `${range} · Drag the green handles or the window to choose the part to clone (3–${MAX_REF_S} s)`;
-  const atPreset = wiz.presetSel && wiz.sel.start === wiz.presetSel.start && wiz.sel.end === wiz.presetSel.end;
-  if (wizTranscriptHint && trimEditor && !atPreset && trimEditor.cutsSpeech()) {
+  updateTranscriptHint();
+}
+
+function updateTranscriptHint() {
+  if (!wizTranscriptHint) return;
+  const atPreset = wiz.presetSel && wiz.sel && wiz.sel.start === wiz.presetSel.start && wiz.sel.end === wiz.presetSel.end;
+  if (asr.error) {
+    wizTranscriptHint.textContent = asr.error;
+  } else if (asrStale()) {
+    wizTranscriptHint.textContent = 'The selection changed since it was transcribed — transcribe the new selection, or edit the text to match it.';
+  } else if (asr.autoText != null && wizTranscript.value === asr.autoText) {
+    const lang = languageName(asr.lang);
+    wizTranscriptHint.textContent = `Transcribed automatically${lang ? ` (${lang})` : ''} — check that it matches the selected part word for word.`;
+  } else if (trimEditor && wiz.sourcePcm && !atPreset && trimEditor.cutsSpeech()) {
     wizTranscriptHint.textContent = 'You trimmed the clip: the transcript must contain exactly the words spoken in the selected part.';
-  } else if (wizTranscriptHint) {
+  } else {
     wizTranscriptHint.textContent = defaultTranscriptHint();
   }
 }
@@ -1733,9 +1765,153 @@ function defaultTranscriptHint() {
   return wiz.source === 'recorded'
     ? 'Pre-filled from your script. Fix any words you changed while reading.'
     : wiz.source === 'uploaded'
-      ? 'Type the exact words spoken in the selected part — this noticeably improves cloning accuracy.'
+      ? 'Type the exact words spoken in the selected part, or transcribe them automatically — an exact transcript noticeably improves cloning.'
       : 'Pre-filled with the generated text.';
 }
+
+
+// ── Automatic transcription ──
+// Whisper large-v3-turbo (workers/asr-worker.js) — what OmniVoice itself uses
+// to transcribe references. The worker starts on first use and is stopped
+// when the wizard closes, so its GPU memory is only held while it's useful.
+
+const ASR_CACHED_KEY = 'vocoloco-asr-cached'; // model downloaded before
+const asr = {
+  worker: null, nextId: 0, pending: new Map(),
+  busy: false, phase: null, pct: null,
+  autoText: null, sel: null, lang: null, error: null, // sel: the selection autoText is for
+};
+
+let asrHostPromise = null;
+function resolveAsrHost() {
+  asrHostPromise ??= (async () => {
+    // Local dev mirror (scripts/fetch-models.sh writes config.json last)
+    if (await resolveModelBaseUrl() === LOCAL_MODEL_URL) {
+      try {
+        const r = await fetch(`${LOCAL_MODEL_URL}/onnx-community/whisper-large-v3-turbo/config.json`, { method: 'HEAD' });
+        if (r.ok) return `${LOCAL_MODEL_URL}/`;
+      } catch { /* no mirror */ }
+    }
+    return 'https://huggingface.co/';
+  })();
+  return asrHostPromise;
+}
+
+function asrWorker() {
+  if (asr.worker) return asr.worker;
+  const w = new Worker('workers/asr-worker.js?v=2', { type: 'module' });
+  w.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'progress') {
+      asr.phase = m.phase;
+      asr.pct = m.totalBytes && m.loadedBytes < m.totalBytes ? Math.floor((m.loadedBytes / m.totalBytes) * 100) : null;
+      updateAsrButton();
+    } else if (m.type === 'ready') {
+      localStorage.setItem(ASR_CACHED_KEY, '1');
+    } else if (m.type === 'result' || m.type === 'error') {
+      if (m.type === 'result') localStorage.setItem(ASR_CACHED_KEY, '1');
+      const p = asr.pending.get(m.id);
+      if (!p) return;
+      asr.pending.delete(m.id);
+      if (m.type === 'result') p.resolve(m);
+      else p.reject(Object.assign(new Error(m.message), { code: m.code }));
+    }
+  };
+  w.onerror = (e) => {
+    console.error('ASR worker error:', e);
+    stopAsr({ code: 'failed', message: e.message || 'the speech recognizer could not start' });
+  };
+  asr.worker = w;
+  return w;
+}
+
+// Pending requests fail with `reason` (default: stopped on purpose, no message shown)
+function stopAsr(reason = { code: 'stopped', message: 'stopped' }) {
+  if (asr.worker) { asr.worker.terminate(); asr.worker = null; }
+  for (const p of asr.pending.values()) p.reject(Object.assign(new Error(reason.message), { code: reason.code }));
+  asr.pending.clear();
+}
+
+async function resample16k(pcm24) {
+  const ctx = new OfflineAudioContext(1, Math.ceil(pcm24.length * 16000 / 24000), 16000);
+  const buf = ctx.createBuffer(1, pcm24.length, 24000);
+  buf.copyToChannel(pcm24, 0);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  src.start();
+  return new Float32Array((await ctx.startRendering()).getChannelData(0));
+}
+
+async function requestTranscript(pcm24) {
+  const [host, pcm] = await Promise.all([resolveAsrHost(), resample16k(pcm24)]);
+  const id = ++asr.nextId;
+  return new Promise((resolve, reject) => {
+    asr.pending.set(id, { resolve, reject });
+    asrWorker().postMessage({ type: 'transcribe', id, pcm, host }, [pcm.buffer]);
+  });
+}
+
+function languageName(code) {
+  if (!code) return null;
+  try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code); } catch { return code; }
+}
+
+function asrSupported() { return !!navigator.gpu; }
+
+function updateAsrButton() {
+  if (!wizAsrBtn) return;
+  const cached = localStorage.getItem(ASR_CACHED_KEY) === '1';
+  let label;
+  if (!asrSupported()) label = 'Automatic transcription needs WebGPU';
+  else if (!asr.busy) label = asrStale() ? 'Transcribe the new selection' : cached ? 'Transcribe automatically' : 'Transcribe automatically · 0.5 GB download';
+  else if (asr.phase === 'download' && asr.pct != null) label = `Downloading speech model… ${asr.pct}%`;
+  else if (asr.phase === 'download' || asr.phase === 'compile') label = 'Loading speech model…';
+  else label = 'Transcribing…';
+  wizAsrLabel.textContent = label;
+  wizAsrBtn.disabled = !asrSupported() || asr.busy || !wiz.pcm;
+  wizAsrBtn.classList.toggle('busy', asr.busy);
+  wizAsrBtn.title = cached ? '' : 'Downloads the Whisper speech recognition model once (~0.5 GB); it runs on your device';
+}
+
+// The automatic transcript no longer matches the selection (moved since)
+function asrStale() {
+  return asr.autoText != null && wizTranscript.value === asr.autoText && !!asr.sel && !!wiz.sel
+    && (asr.sel.start !== wiz.sel.start || asr.sel.end !== wiz.sel.end);
+}
+
+// Only on request: the user picks the part first, then transcribes it
+async function runAutoTranscribe() {
+  if (!asrSupported() || !wiz.pcm || asr.busy) return;
+  asr.busy = true;
+  asr.error = null;
+  asr.phase = asr.worker ? 'transcribe' : 'download';
+  updateAsrButton();
+  const source = wiz.sourcePcm;
+  const sel = { ...wiz.sel };
+  try {
+    const r = await requestTranscript(wiz.pcm);
+    if (wiz.sourcePcm !== source || wiz.step !== 'review') return; // the wizard moved on
+    wizTranscript.value = r.text;
+    asr.autoText = r.text;
+    asr.sel = sel;
+    asr.lang = r.lang;
+    if (!wiz.lang && r.lang) wiz.lang = r.lang;
+  } catch (e) {
+    if (e.code === 'stopped') return;
+    asr.error = e.code === 'no-webgpu'
+      ? 'Automatic transcription needs WebGPU — type the transcript instead.'
+      : `Automatic transcription failed (${e.message}) — type the transcript instead.`;
+  } finally {
+    asr.busy = false;
+    asr.phase = null;
+    updateAsrButton();
+    if (wiz.step === 'review') updateTranscriptHint();
+  }
+}
+
+if (wizAsrBtn) wizAsrBtn.addEventListener('click', runAutoTranscribe);
+if (wizTranscript) wizTranscript.addEventListener('input', () => { asr.error = null; updateTranscriptHint(); updateAsrButton(); });
 
 // Preview of the selection with a moving playhead
 let reviewPlayheadRaf = 0;
@@ -1779,6 +1955,10 @@ const WIZ_TITLES = {
 };
 
 function wizReset() {
+  asr.autoText = null;
+  asr.sel = null;
+  asr.lang = null;
+  asr.error = null;
   wiz.step = null;
   wiz.method = null;
   wiz.source = null;
@@ -1816,11 +1996,14 @@ function openVoiceWizard(startStep = 'method', preset = null) {
   }
   if (voicesHome) voicesHome.style.display = 'none';
   if (voiceWizard) voiceWizard.style.display = 'flex';
+  // Fetch the voice encoder while the user records / picks audio
+  if (isReady && encoderAvailable) ttsWorker.postMessage({ type: 'prefetch-encoder' });
   wizGoto(startStep);
 }
 
 function closeVoiceWizard() {
   wizStopMedia();
+  stopAsr(); // frees its GPU memory
   wizReset();
   if (voiceWizard) voiceWizard.style.display = 'none';
   if (voicesHome) voicesHome.style.display = 'flex';
@@ -1847,7 +2030,8 @@ function wizGoto(step) {
     wizReviewBack.textContent = wiz.source === 'recorded' ? '← Re-record'
       : wiz.source === 'uploaded' ? '← Choose another file'
       : 'Cancel';
-    wizTranscriptHint.textContent = defaultTranscriptHint();
+    updateTranscriptHint();
+    updateAsrButton();
     if (!wizVoiceName.value) wizVoiceName.focus({ preventScroll: true });
   } else {
     stopReviewPreview();
@@ -2048,7 +2232,7 @@ function recZoneLabel(elapsed) {
   if (elapsed < 3) return 'Keep going — at least 3 seconds needed';
   if (elapsed < 5) return 'Usable — a few more seconds is better';
   if (elapsed < 12) return 'Good length — stop whenever you finish the script';
-  return 'Long enough — stopping automatically at 15s';
+  return `Long enough — stopping automatically at ${MAX_REF_S}s`;
 }
 
 function startMeterLoop() {
@@ -2100,7 +2284,7 @@ function startMeterLoop() {
       if (wizRecElapsed) wizRecElapsed.textContent = elapsed.toFixed(1) + 's';
       if (wizRecFill) wizRecFill.style.width = Math.min(100, (elapsed / 15) * 100) + '%';
       if (wizRecZone) wizRecZone.textContent = recZoneLabel(elapsed);
-      if (elapsed >= 15) stopWizRecording();
+      if (elapsed >= MAX_REF_S) stopWizRecording();
     }
 
     wiz.raf = requestAnimationFrame(tick);
@@ -2280,16 +2464,18 @@ function showUploadError(text) {
 async function handleWizFile(file) {
   if (!file) return;
   if (wizUploadError) wizUploadError.classList.add('hidden');
-  if (file.size > 25 * 1024 * 1024) {
-    showUploadError('File too large — use a short clip under 25 MB.');
-    return;
-  }
   let pcm;
   try {
+    if (wizDropzone) wizDropzone.classList.add('loading');
     pcm = await decodeRefAudio(file);
-  } catch {
-    showUploadError("Couldn't read this file. Use MP3, WAV, M4A, or OGG.");
+  } catch (e) {
+    console.warn('Audio decode failed:', e);
+    showUploadError(file.size > 200 * 1024 * 1024
+      ? "Couldn't decode this file — it may be too long for the browser to decode at once. Try a shorter excerpt or a compressed format (MP3, M4A, OGG)."
+      : "Couldn't read this file. Use MP3, WAV, M4A, OGG, or a video file with an audio track.");
     return;
+  } finally {
+    if (wizDropzone) wizDropzone.classList.remove('loading');
   }
   wiz.source = 'uploaded';
   wiz.presetTokens = null;
@@ -2297,6 +2483,9 @@ async function handleWizFile(file) {
   wiz.scriptId = null;
   wiz.lang = null;
   wizTranscript.value = '';
+  asr.autoText = null;
+  asr.sel = null;
+  asr.error = null;
   if (wizFileInput) wizFileInput.value = '';
   wizGoto('review');
 }
@@ -2323,7 +2512,7 @@ function updateReviewVerdict() {
   if (d < 3) { cls = 'bad'; label = 'Too short'; blocker = 'Too short to clone — use at least 3 seconds of speech.'; }
   else if (d < 5) { cls = 'warn'; label = 'Usable'; }
   else if (d <= 12) { cls = 'good'; label = 'Good length'; }
-  else { cls = 'warn'; label = 'Long'; }
+  else { cls = 'warn'; label = 'Long · slower'; }
   if (wizReviewVerdict) {
     wizReviewVerdict.className = 'verdict-chip ' + cls;
     wizReviewVerdict.textContent = label;
@@ -2620,6 +2809,13 @@ function clearDB(dbName) {
   });
 }
 
+// TTS models, the speech recognizer (+ the ONNX Runtime files transformers.js caches)
+async function clearModelCaches() {
+  stopAsr();
+  await Promise.all(['omnivoice-models-v1', 'vocoloco-asr-v1', 'transformers-cache'].map((n) => caches.delete(n)));
+  localStorage.removeItem(ASR_CACHED_KEY);
+}
+
 const clearCacheBtn = $('clear-cache-btn');
 if (clearCacheBtn) {
   clearCacheBtn.addEventListener('click', async () => {
@@ -2630,7 +2826,7 @@ if (clearCacheBtn) {
       danger: true,
     });
     if (!ok) return;
-    await caches.delete('omnivoice-models-v1');
+    await clearModelCaches();
     await clearDB('omnivoice-cache'); // legacy cache cleanup
     calculateStorage();
     toast('Cached models cleared', { type: 'success' });
@@ -2688,7 +2884,7 @@ if (clearAllBtn) {
       danger: true,
     });
     if (!ok) return;
-    await caches.delete('omnivoice-models-v1');
+    await clearModelCaches();
     await clearDB('omnivoice-cache');
     await clearDB(HISTORY_DB);
     await clearDB(VOICE_DB);

@@ -11,6 +11,12 @@ import { estimateTargetTokens } from './duration-estimator.js';
 // Audio token budgets (25 tokens ≈ 1 s of audio).
 export const CHUNK1_TOKEN_BUDGET = 220; // ~9 s — fast first audio + valid chain reference
 export const CHUNK_TOKEN_BUDGET = 450;  // ~18 s — amortizes per-chunk overhead
+// A short last chunk gets a too tight duration estimate (the slowdown at the
+// end of a sentence doesn't scale with text length) and its last word can be
+// cut off. It's merged into the previous chunk while that stays within
+// MERGE_STRETCH of its budget — OmniVoice itself doesn't split short texts.
+export const MIN_TAIL_TOKENS = 100;     // ~4 s
+const MERGE_STRETCH = 1.3;
 
 const est = (text) => estimateTargetTokens(text);
 
@@ -76,6 +82,13 @@ export function chunkText(fullText) {
     }
   }
   if (current) chunks.push(current);
+
+  if (chunks.length > 1) {
+    const last = chunks[chunks.length - 1], prev = chunks[chunks.length - 2];
+    const prevBudget = chunks.length === 2 ? CHUNK1_TOKEN_BUDGET : CHUNK_TOKEN_BUDGET;
+    const merged = prev + ' ' + last;
+    if (est(last) < MIN_TAIL_TOKENS && est(merged) <= prevBudget * MERGE_STRETCH) chunks.splice(-2, 2, merged);
+  }
 
   return chunks
     .map((text) => text.trim())

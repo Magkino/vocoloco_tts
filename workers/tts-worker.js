@@ -3,15 +3,18 @@
  * Uses @huggingface/transformers for proper Qwen2 BPE tokenization.
  */
 
-import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.all.mjs';
+// onnxruntime-web/webgpu: the native WebGPU EP (the default/`all` bundles use
+// the deprecated JSEP backend); its WASM EP serves the CPU fallback too
+import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.webgpu.min.mjs';
 import { AutoTokenizer, env as tfEnv } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/dist/transformers.min.js';
 import { estimateTargetTokens } from '../duration-estimator.js';
 import { addEndPunctuation } from '../sentence-buffer.js?v=2'; // ?v: a stale cached copy lacks this export
 import { trimAndFade, peakAbs } from '../audio-postprocess.js';
-import { GpuPostProcessor } from './gpu-postprocess.js';
+import { GpuPostProcessor } from './gpu-postprocess.js?v=2';
 import { unmaskSchedule } from './unmask-schedule.js';
+import { inspectFile, loadFile } from './model-files.js';
 
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
 
 // Maximize performance — multi-threading requires cross-origin isolation (COOP/COEP headers)
 ort.env.wasm.numThreads = self.crossOriginIsolated ? (navigator.hardwareConcurrency || 4) : 1;
@@ -26,6 +29,9 @@ let encoderSession = null;
 let tokenizer = null;
 let config = null;
 let gpuPostProc = null;
+let modelBase = null;
+let sessionEps = ['wasm'];
+let onGpu = false;
 
 // ─── Cancellation ───────────────────────────────────────────────────────────
 // Job-scoped: each synthesize message snapshots the cancel counter when it
@@ -50,53 +56,13 @@ function yieldMacrotask() {
   return new Promise(res => { _yieldResolve = res; _yieldChannel.port2.postMessage(0); });
 }
 
-// ─── Cache API ─────────────────────────────────────────────────────────────
+// ─── Model files ────────────────────────────────────────────────────────────
 
 const CACHE_NAME = 'omnivoice-models-v1';
 
-// ─── Fetch with progress + Cache API caching ──────────────────────────────
-
-async function fetchWithProgress(url, onProgress, onCached) {
-  const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(url);
-  if (cached) {
-    const buf = await cached.arrayBuffer();
-    if (onCached) onCached(buf.byteLength);
-    return buf;
-  }
-
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`Fetch failed: ${resp.status} for ${url}`);
-  const contentLength = parseInt(resp.headers.get('Content-Length') || '0', 10);
-  const reader = resp.body.getReader();
-  const chunks = [];
-  let loaded = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.byteLength;
-    if (onProgress) onProgress(loaded, contentLength || null);
-  }
-  const result = new Uint8Array(loaded);
-  let offset = 0;
-  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
-  const buf = result.buffer;
-
-  // Store in Cache API — no structured clone needed, stores as a Response blob
-  try {
-    await cache.put(url, new Response(buf, {
-      headers: { 'Content-Length': String(buf.byteLength), 'Content-Type': 'application/octet-stream' }
-    }));
-  } catch (e) { console.warn('Cache store failed:', e); }
-  return buf;
-}
-
 // ─── Tensor helper ──────────────────────────────────────────────────────────
 
-function T(type, data, dims) { return new ort.Tensor(type, data, dims); }
-
-// ─── Log-softmax over a slice of a Float32Array ─────────────────────────────
+function T_(type, data, dims) { return new ort.Tensor(type, data, dims); }
 
 // ─── Seeded PRNG (mulberry32) for deterministic generation ──────────────────
 
@@ -126,15 +92,17 @@ function logSoftmaxInto(arr, offset, len, out) {
   for (let i = 0; i < len; i++) out[i] = arr[offset + i] - lse;
 }
 
-function cpuPostProcess(logits, C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty, pred, scores) {
+// Same math and logits layout as the WGSL shader in gpu-postprocess.js (cond
+// and uncond may be the same array, see makeBatchedPasses).
+function cpuPostProcess(cond, uncond, { C, T: numTargetTokens, V, maskId, condStride, targetOff, uncondStride, uncondOff = 0, guidanceScale, layerPenalty }, pred, scores) {
   const gScale1 = 1 + guidanceScale;
   for (let c = 0; c < C; c++) {
     const layerScore = layerPenalty * c;
     for (let t = 0; t < numTargetTokens; t++) {
-      const cOff = (c * maxLen + targetOff + t) * V;
-      const uOff = ((C + c) * maxLen + t) * V;
-      logSoftmaxInto(logits, cOff, V, _cLP);
-      logSoftmaxInto(logits, uOff, V, _uLP);
+      const cOff = (c * condStride + targetOff + t) * V;
+      const uOff = uncondOff + (c * uncondStride + t) * V;
+      logSoftmaxInto(cond, cOff, V, _cLP);
+      logSoftmaxInto(uncond, uOff, V, _uLP);
       let mx = -Infinity;
       for (let v = 0; v < V; v++) {
         const gv = gScale1 * _cLP[v] - guidanceScale * _uLP[v];
@@ -242,56 +210,102 @@ function topKUnmask(scores, pred, tokens, n, k) {
   }
 }
 
-let pred_buf = null, scores_buf = null;
-
 // ─── Iterative unmasking generation loop ────────────────────────────────────
 
+// Classifier-free guidance needs a conditional pass (full sequence) and an
+// unconditional one (target only) per step. Two layouts:
+//  - batched: one (2, C, L) run, the unconditional half padded to L
+//  - split: two runs, nothing padded
+// On WebGPU each run costs ~30 ms of fixed overhead (measured on an M-series
+// Mac), so batched is faster until the padding outweighs it — long cloned-voice
+// references. On the CPU there is no such overhead: always split.
+const PASSES = new URL(self.location.href).searchParams.get('passes'); // test override: 'batched' | 'split'
+const SPLIT_MIN_PAD = 200; // padded positions above which split runs win on WebGPU
+
+function makeBatchedPasses({ inputIds, audioMask, totalLen: L, numTargetTokens: T, targetOff, C }, maskId, V) {
+  const ids = new BigInt64Array(2 * C * L).fill(BigInt(maskId));
+  for (let c = 0; c < C; c++) {
+    ids.set(inputIds.subarray(c * L, (c + 1) * L), c * L);
+    for (let t = 0; t < T; t++) ids[(C + c) * L + t] = inputIds[c * L + targetOff + t];
+  }
+  const mask = new Uint8Array(2 * L);
+  mask.set(audioMask);
+  mask.fill(1, L, L + T);
+  const attn = new Uint8Array(2 * L * L);
+  attn.fill(1, 0, L * L);
+  for (let q = 0; q < T; q++) attn.fill(1, L * L + q * L, L * L + q * L + T);
+  for (let p = T; p < L; p++) attn[L * L + p * L + p] = 1; // padding attends to itself only
+  return {
+    name: 'batched',
+    feeds: [{
+      input_ids: T_('int64', ids, [2, C, L]),
+      audio_mask: T_('bool', mask, [2, L]),
+      attention_mask: T_('bool', attn, [2, 1, L, L]),
+    }],
+    layout: { condStride: L, targetOff, uncondStride: L, uncondOff: C * L * V },
+    setTarget(c, t, v) { ids[c * L + targetOff + t] = v; ids[(C + c) * L + t] = v; },
+  };
+}
+
+function makeSplitPasses({ inputIds, audioMask, totalLen: L, numTargetTokens: T, targetOff, C }, maskId) {
+  const condIds = inputIds.slice();
+  const uncondIds = new BigInt64Array(C * T).fill(BigInt(maskId));
+  return {
+    name: 'split',
+    feeds: [{
+      input_ids: T_('int64', condIds, [1, C, L]),
+      audio_mask: T_('bool', audioMask, [1, L]),
+      attention_mask: T_('bool', new Uint8Array(L * L).fill(1), [1, 1, L, L]),
+    }, {
+      input_ids: T_('int64', uncondIds, [1, C, T]),
+      audio_mask: T_('bool', new Uint8Array(T).fill(1), [1, T]),
+      attention_mask: T_('bool', new Uint8Array(T * T).fill(1), [1, 1, T, T]),
+    }],
+    layout: { condStride: L, targetOff, uncondStride: T, uncondOff: 0 },
+    setTarget(c, t, v) { condIds[c * L + targetOff + t] = v; uncondIds[c * T + t] = v; },
+  };
+}
+
+// pred / scores for the current step: GPU post-processing straight from ORT's
+// output buffers when possible, otherwise on the CPU.
+async function postProcessStep(condOut, uncondOut, params, pred, scores) {
+  if (gpuPostProc && condOut.location === 'gpu-buffer' && uncondOut.location === 'gpu-buffer') {
+    try {
+      await gpuPostProc.run(condOut.gpuBuffer, uncondOut.gpuBuffer,
+        { ...params, condElems: condOut.size, uncondElems: uncondOut.size }, pred, scores);
+      return 'GPU-PP';
+    } catch (e) {
+      console.warn('[gpu-postprocess] failed, falling back to CPU:', e.message);
+      gpuPostProc.destroy();
+      gpuPostProc = null;
+    }
+  }
+  const cond = condOut.location === 'cpu' ? condOut.data : await condOut.getData();
+  const uncond = uncondOut === condOut ? cond : (uncondOut.location === 'cpu' ? uncondOut.data : await uncondOut.getData());
+  cpuPostProcess(cond, uncond, params, pred, scores);
+  return 'CPU-PP';
+}
+
 async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layerPenalty = 5.0, posTemp = 5.0) {
-  const { inputIds, audioMask, totalLen, numTargetTokens, targetOff, C } = inp;
+  const { totalLen: condLen, numTargetTokens, C } = inp;
   const maskId = cfg.audio_mask_id;
   const V = cfg.audio_vocab_size;
+  const nPos = C * numTargetTokens;
 
-  const condLen = totalLen;
-  const uncondLen = numTargetTokens;
-  const maxLen = condLen;
+  const split = PASSES ? PASSES === 'split' : (!onGpu || condLen - numTargetTokens > SPLIT_MIN_PAD);
+  const passes = split ? makeSplitPasses(inp, maskId) : makeBatchedPasses(inp, maskId, V);
+  const ppParams = { C, T: numTargetTokens, V, maskId, guidanceScale, layerPenalty, ...passes.layout };
 
-  // Batch input_ids: (2, C, maxLen) — cond + uncond
-  const bIds = new BigInt64Array(2 * C * maxLen).fill(BigInt(maskId));
-  for (let c = 0; c < C; c++)
-    for (let s = 0; s < condLen; s++)
-      bIds[c * maxLen + s] = inputIds[c * totalLen + s];
-  for (let c = 0; c < C; c++)
-    for (let t = 0; t < uncondLen; t++)
-      bIds[(C + c) * maxLen + t] = inputIds[c * totalLen + targetOff + t];
+  const tokens = new BigInt64Array(nPos).fill(BigInt(maskId));
+  const pred = new Int32Array(nPos);
+  const scores = new Float32Array(nPos);
+  const bigMaskId = BigInt(maskId);
 
-  // Batch audio_mask: (2, maxLen)
-  const bMask = new Uint8Array(2 * maxLen);
-  for (let s = 0; s < condLen; s++) bMask[s] = audioMask[s];
-  for (let t = 0; t < uncondLen; t++) bMask[maxLen + t] = 1;
+  const sched = unmaskSchedule(nPos, numStep, tShift);
 
-  // Batch attention_mask: (2, 1, maxLen, maxLen)
-  const bAttn = new Uint8Array(2 * maxLen * maxLen);
-  for (let q = 0; q < condLen; q++)
-    for (let k = 0; k < condLen; k++)
-      bAttn[q * maxLen + k] = 1;
-  for (let q = 0; q < uncondLen; q++)
-    for (let k = 0; k < uncondLen; k++)
-      bAttn[maxLen * maxLen + q * maxLen + k] = 1;
-  for (let p = uncondLen; p < maxLen; p++)
-    bAttn[maxLen * maxLen + p * maxLen + p] = 1;
-
-  // Token state
-  const tokens = new BigInt64Array(C * numTargetTokens).fill(BigInt(maskId));
-  pred_buf = null; scores_buf = null;
-
-  const sched = unmaskSchedule(numTargetTokens * C, numStep, tShift);
-
-  if (gpuPostProc) {
-    try { gpuPostProc.prepare(C, maxLen, V, numTargetTokens); }
-    catch (e) { console.warn('[gpu-postprocess] prepare failed:', e.message); gpuPostProc.destroy(); gpuPostProc = null; }
-  }
-
-  let totalInferenceMs = 0, totalModelMs = 0, totalGpuPPMs = 0;
+  // With logits left on the GPU, run() can return before the GPU is done, so
+  // part of the model time shows up in the post-processing readback.
+  let totalMs = 0, totalRunMs = 0, totalPPMs = 0, ppLabel = 'CPU-PP';
   for (let step = 0; step < numStep; step++) {
     // Let a pending 'cancel' message land, then honor it between steps
     await yieldMacrotask();
@@ -300,58 +314,18 @@ async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layer
     if (k <= 0) continue;
     const stepT0 = performance.now();
 
-    const modelT0 = performance.now();
-    const results = await mainSession.run({
-      input_ids: T('int64', bIds, [2, C, maxLen]),
-      audio_mask: T('bool', bMask, [2, maxLen]),
-      attention_mask: T('bool', bAttn, [2, 1, maxLen, maxLen]),
-    });
-    const logits = results.audio_logits.data; // (2, C, maxLen, V)
-    totalModelMs += performance.now() - modelT0;
-
-    const nPos = C * numTargetTokens;
-    const pred = step === 0 ? new Int32Array(nPos) : pred_buf;
-    const scores = step === 0 ? new Float32Array(nPos) : scores_buf;
-    if (step === 0) { pred_buf = pred; scores_buf = scores; }
-
-    const ppT0 = performance.now();
-    if (gpuPostProc) {
-      try {
-        await gpuPostProc.run(logits, {
-          C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty
-        }, pred, scores);
-        // On first step, benchmark CPU too and keep whichever is faster
-        if (step === 0) {
-          const gpuMs = performance.now() - ppT0;
-          const cpuPred = new Int32Array(nPos);
-          const cpuScores = new Float32Array(nPos);
-          const cpuT0 = performance.now();
-          cpuPostProcess(logits, C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty, cpuPred, cpuScores);
-          const cpuMs = performance.now() - cpuT0;
-          if (cpuMs < gpuMs) {
-            console.log(`[gpu-postprocess] CPU faster (${cpuMs.toFixed(0)}ms) than GPU (${gpuMs.toFixed(0)}ms), switching to CPU`);
-            // Use CPU results for this step
-            pred.set(cpuPred);
-            scores.set(cpuScores);
-            gpuPostProc.destroy();
-            gpuPostProc = null;
-          } else {
-            console.log(`[gpu-postprocess] GPU (${gpuMs.toFixed(0)}ms) faster than CPU (${cpuMs.toFixed(0)}ms), keeping GPU`);
-          }
-        }
-      } catch (e) {
-        console.warn('[gpu-postprocess] dispatch failed, falling back to CPU:', e.message);
-        gpuPostProc.destroy();
-        gpuPostProc = null;
-        cpuPostProcess(logits, C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty, pred, scores);
-      }
-    } else {
-      cpuPostProcess(logits, C, maxLen, V, numTargetTokens, targetOff, maskId, guidanceScale, layerPenalty, pred, scores);
+    const outs = [];
+    try {
+      for (const feeds of passes.feeds) outs.push((await mainSession.run(feeds)).audio_logits);
+      const ppT0 = performance.now();
+      totalRunMs += ppT0 - stepT0;
+      ppLabel = await postProcessStep(outs[0], outs[outs.length - 1], ppParams, pred, scores);
+      totalPPMs += performance.now() - ppT0;
+    } finally {
+      for (const o of outs) o.dispose();
     }
-    totalGpuPPMs += performance.now() - ppT0;
 
     // Gumbel noise + mask already-unmasked (fused)
-    const bigMaskId = BigInt(maskId);
     if (posTemp > 0) {
       const invTemp = 1 / posTemp;
       for (let i = 0; i < nPos; i++) {
@@ -366,26 +340,21 @@ async function generateIterative(inp, cfg, numStep, guidanceScale, tShift, layer
     // Partial top-k using quickselect instead of full sort
     topKUnmask(scores, pred, tokens, nPos, k);
 
-
-    // Update batch inputs
+    // Feed the new tokens to both passes
     for (let c = 0; c < C; c++)
-      for (let t = 0; t < numTargetTokens; t++) {
-        const v = tokens[c * numTargetTokens + t];
-        bIds[c * maxLen + targetOff + t] = v;
-        bIds[(C + c) * maxLen + t] = v;
-      }
+      for (let t = 0; t < numTargetTokens; t++)
+        passes.setTarget(c, t, tokens[c * numTargetTokens + t]);
 
     const stepMs = performance.now() - stepT0;
-    totalInferenceMs += stepMs;
+    totalMs += stepMs;
     postMessage({
       type: 'progress', stage: 'generating', jobId: activeJobId,
       step: step + 1, numStep, stepMs: Math.round(stepMs),
       detail: `Step ${step + 1}/${numStep} (${stepMs.toFixed(0)}ms)`,
     });
   }
-  const jsMs = totalInferenceMs - totalModelMs;
-  const ppLabel = gpuPostProc ? 'GPU-PP' : 'CPU-PP';
-  console.log(`[perf] ${numStep} steps in ${totalInferenceMs.toFixed(0)}ms total | model: ${totalModelMs.toFixed(0)}ms (${(totalModelMs/numStep).toFixed(0)}ms/step) | ${ppLabel}: ${totalGpuPPMs.toFixed(0)}ms (${(totalGpuPPMs/numStep).toFixed(0)}ms/step) | JS-other: ${(jsMs - totalGpuPPMs).toFixed(0)}ms`);
+  const per = (ms) => `${ms.toFixed(0)}ms (${(ms / numStep).toFixed(0)}ms/step)`;
+  console.log(`[perf] ${numStep} steps, ${passes.name}, ${numTargetTokens} target / ${condLen} cond tokens in ${per(totalMs)} | run: ${per(totalRunMs)} | ${ppLabel}: ${per(totalPPMs)} | JS-other: ${per(totalMs - totalRunMs - totalPPMs)}`);
 
   return tokens;
 }
@@ -415,6 +384,7 @@ function postProcessAudio(pcm, sr, normalize = true) {
 
 async function init(modelBaseUrl, forceCPU) {
   try {
+    modelBase = modelBaseUrl;
     // Detect WebGPU — used for ONNX acceleration and GPU post-processing
     // Append ?cpu to the page URL to force CPU-only mode for testing
     let hasWorkingGPU = false;
@@ -430,11 +400,6 @@ async function init(modelBaseUrl, forceCPU) {
       postMessage({ type: 'progress', stage: 'loading', detail: 'No WebGPU detected — running in CPU mode (slower)' });
     }
 
-    // GPU post-processor uses its own GPUDevice. Only useful when ONNX runs
-    // on WASM (so the GPU is free). When ONNX uses WebGPU, a second device
-    // causes contention that slows model inference by 5-7x.
-    // We defer this decision until after we know the actual ONNX backend.
-
     postMessage({ type: 'progress', stage: 'loading', phase: 'config', detail: 'Loading config...' });
     config = await (await fetch(`${modelBaseUrl}/omnivoice-config.json`)).json();
 
@@ -442,106 +407,55 @@ async function init(modelBaseUrl, forceCPU) {
     tokenizer = await AutoTokenizer.from_pretrained('Gigsu/vocoloco-onnx');
 
     // ── Load model data ────────────────────────────────────────────────────
+    // The voice encoder is not part of this: it's only needed to clone a new
+    // voice and is loaded on first use (ensureEncoder).
     const dataFiles = await (await fetch(`${modelBaseUrl}/omnivoice-main-manifest.json`)).json();
+    const urls = [...dataFiles.map(f => `${modelBaseUrl}/${f}`), `${modelBaseUrl}/omnivoice-decoder.onnx`];
 
-    // Check if all models are cached
     const cache = await caches.open(CACHE_NAME);
-    const allUrls = [
-      ...dataFiles.map(f => `${modelBaseUrl}/${f}`),
-      `${modelBaseUrl}/omnivoice-decoder.onnx`,
-      `${modelBaseUrl}/omnivoice-encoder-fixed.onnx`,
-    ];
-    const cacheChecks = await Promise.all(allUrls.map(u => cache.match(u)));
-    const allCached = cacheChecks.every(Boolean);
-    const uncachedCount = cacheChecks.filter(c => !c).length;
-
-    // Byte-accurate download plan: cached sizes come from the stored
-    // Content-Length header, uncached sizes from a HEAD pre-pass (Hugging Face
-    // exposes Content-Length / X-Linked-Size through CORS). Any failure falls
-    // back to file-count progress (totalBytes = null).
-    let cachedBytes = 0;
-    let totalBytes = null;
-    try {
-      const sizes = await Promise.all(allUrls.map(async (u, i) => {
-        const hit = cacheChecks[i];
-        if (hit) {
-          const n = parseInt(hit.headers.get('Content-Length') || '0', 10);
-          cachedBytes += n;
-          return n;
-        }
-        const head = await fetch(u, { method: 'HEAD' });
-        return parseInt(head.headers.get('Content-Length') || head.headers.get('X-Linked-Size') || '0', 10);
-      }));
-      if (sizes.every(n => n > 0)) totalBytes = sizes.reduce((a, b) => a + b, 0);
-    } catch { totalBytes = null; }
+    const files = await Promise.all(urls.map(u => inspectFile(cache, u)));
+    const pending = files.filter(f => !f.complete).length;
+    const cachedBytes = files.reduce((s, f) => s + f.cachedBytes, 0);
+    const totalBytes = files.every(f => f.size > 0) ? files.reduce((s, f) => s + f.size, 0) : null;
 
     postMessage({
       type: 'plan',
-      firstRun: uncachedCount === allUrls.length,
-      resuming: uncachedCount > 0 && uncachedCount < allUrls.length,
+      firstRun: pending === urls.length && cachedBytes === 0,
+      resuming: pending > 0 && cachedBytes > 0,
       totalBytes, cachedBytes,
-      fileCount: allUrls.length, filesToDownload: uncachedCount,
+      fileCount: urls.length, filesToDownload: pending,
     });
 
-    let shardBuffers, decBuf, encBuf;
-
-    if (allCached) {
-      // All cached: load in parallel (fast)
-      postMessage({ type: 'progress', stage: 'loading', phase: 'cache-load', detail: 'Loading from cache...' });
-      const results = await Promise.all(allUrls.map(u => fetchWithProgress(u, null, null)));
-      shardBuffers = results.slice(0, dataFiles.length);
-      decBuf = results[dataFiles.length];
-      encBuf = results[dataFiles.length + 1];
-    } else {
-      // Not (fully) cached: download sequentially with byte-accurate progress
-      let loadedBytes = cachedBytes;
-      let lastPost = 0;
-      const postDownload = (extra, fileIndex, fname, detail, force = false) => {
-        const now = performance.now();
-        if (!force && now - lastPost < 150) return;
-        lastPost = now;
-        postMessage({
-          type: 'progress', stage: 'downloading',
-          loadedBytes: loadedBytes + extra, totalBytes,
-          fileIndex, fileCount: allUrls.length, file: fname,
-          detail,
-        });
-      };
-      const results = [];
-      for (let i = 0; i < allUrls.length; i++) {
-        const url = allUrls[i];
-        const wasCached = !!cacheChecks[i];
-        const fname = url.split('/').pop();
-        const label = i < dataFiles.length
-          ? `Shard ${i + 1}/${dataFiles.length}`
-          : (i === dataFiles.length ? 'Decoder' : 'Encoder');
-        if (!wasCached) postDownload(0, i + 1, fname, `${label}...`, true);
-        const buf = await fetchWithProgress(url, (loaded, total) => {
-          const lMB = (loaded / 1e6).toFixed(0), tMB = total ? (total / 1e6).toFixed(0) : '?';
-          postDownload(loaded, i + 1, fname, `${label}: ${lMB}/${tMB} MB`);
-        }, null);
-        if (!wasCached) {
-          loadedBytes += buf.byteLength;
-          postDownload(0, i + 1, fname, `${label} complete`, true);
-        }
-        results.push(buf);
-      }
-      shardBuffers = results.slice(0, dataFiles.length);
-      decBuf = results[dataFiles.length];
-      encBuf = results[dataFiles.length + 1];
-    }
-
-    const externalData = dataFiles.map((fname, i) => ({ path: fname, data: shardBuffers[i] }));
+    let loadedBytes = cachedBytes, lastPost = 0;
+    const postDownload = (force = false) => {
+      const now = performance.now();
+      if (!force && now - lastPost < 150) return;
+      lastPost = now;
+      postMessage({
+        type: 'progress', stage: 'downloading', loadedBytes, totalBytes,
+        detail: `Downloading ${(loadedBytes / 1e6).toFixed(0)} MB…`,
+      });
+    };
+    if (pending) postDownload(true);
+    else postMessage({ type: 'progress', stage: 'loading', phase: 'cache-load', detail: 'Loading from cache...' });
+    const bufs = await Promise.all(urls.map((u, i) => loadFile(cache, u, {
+      size: files[i].size,
+      onBytes: (n) => { loadedBytes += n; postDownload(); },
+    })));
+    if (pending) postDownload(true);
+    const decBuf = bufs.pop();
+    const externalData = dataFiles.map((fname, i) => ({ path: fname, data: bufs[i] }));
 
     // ── Create ONNX sessions ─────────────────────────────────────────────
     let actualBackend = 'cpu';
     postMessage({ type: 'progress', stage: 'loading', phase: 'session-main', detail: 'Creating model session...' });
     if (hasWorkingGPU) {
       try {
-        mainSession = await ort.InferenceSession.create(
-          `${modelBaseUrl}/omnivoice-main-split.onnx`,
-          { executionProviders: ['webgpu'], externalData, graphOptimizationLevel: 'all', enableCpuMemArena: true }
-        );
+        mainSession = await ort.InferenceSession.create(`${modelBaseUrl}/omnivoice-main-split.onnx`, {
+          executionProviders: ['webgpu'], externalData, graphOptimizationLevel: 'all', enableCpuMemArena: true,
+          // logits stay on the GPU, post-processing reads them there
+          preferredOutputLocation: { audio_logits: 'gpu-buffer' },
+        });
         actualBackend = 'webgpu';
       } catch (e) {
         console.warn('[init] Main model WebGPU failed, falling back to WASM:', e.message);
@@ -557,62 +471,96 @@ async function init(modelBaseUrl, forceCPU) {
     }
     console.log(`[init] Main model backend: ${actualBackend}, threads: ${ort.env.wasm.numThreads}`);
 
-    // Init GPU post-processor only when ONNX is on WASM (GPU is free)
-    if (actualBackend === 'cpu' && hasWorkingGPU) {
+    // GPU post-processing runs on ORT's own device, so it can read the logits
+    // buffers directly (a second device would also contend for the GPU)
+    if (actualBackend === 'webgpu') {
       try {
-        gpuPostProc = new GpuPostProcessor();
-        await gpuPostProc.init();
-        console.log('[init] GPU post-processor ready (ONNX on WASM, GPU free for post-processing)');
+        gpuPostProc = new GpuPostProcessor(await ort.env.webgpu.device);
+        console.log('[init] GPU post-processor ready');
       } catch (e) {
         console.warn('[init] GPU post-processor unavailable, using CPU fallback:', e.message);
         gpuPostProc = null;
       }
     }
 
-    const decEp = actualBackend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
+    onGpu = actualBackend === 'webgpu';
+    sessionEps = onGpu ? ['webgpu', 'wasm'] : ['wasm'];
 
     postMessage({ type: 'progress', stage: 'loading', phase: 'session-decoder', detail: 'Creating decoder session...' });
-    decoderSession = await ort.InferenceSession.create(decBuf, { executionProviders: decEp });
+    decoderSession = await ort.InferenceSession.create(decBuf, { executionProviders: sessionEps });
 
-    // Encoder failure is non-fatal: cloning via cached tokens still works,
-    // only encoding NEW reference audio is unavailable.
-    postMessage({ type: 'progress', stage: 'loading', phase: 'session-encoder', detail: 'Creating encoder session...' });
-    try {
-      try {
-        encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: decEp });
-      } catch (e) {
-        console.warn('Encoder WebGPU failed, falling back to WASM:', e.message);
-        encoderSession = await ort.InferenceSession.create(encBuf, { executionProviders: ['wasm'] });
-      }
-    } catch (e) {
-      console.warn('[init] Encoder unavailable on this device:', e.message);
-      encoderSession = null;
-      postMessage({ type: 'progress', stage: 'warning', detail: 'Voice encoder could not load — creating new cloned voices is limited on this device' });
-    }
-
-    // Warm up all sessions with dummy data to compile GPU shaders
+    // Warm up with dummy data to compile GPU shaders
     postMessage({ type: 'progress', stage: 'loading', phase: 'warmup', detail: 'Warming up...' });
     try {
-      const dummyIds = new BigInt64Array(2 * 8 * 4).fill(1024n);
-      const dummyMask = new Uint8Array(2 * 4);
-      const dummyAttn = new Uint8Array(2 * 1 * 4 * 4).fill(1);
-      await mainSession.run({
-        input_ids: new ort.Tensor('int64', dummyIds, [2, 8, 4]),
-        audio_mask: new ort.Tensor('bool', dummyMask, [2, 4]),
-        attention_mask: new ort.Tensor('bool', dummyAttn, [2, 1, 4, 4]),
-      });
-      const dummyCodes = new BigInt64Array(8 * 2).fill(0n);
-      await decoderSession.run({ audio_codes: new ort.Tensor('int64', dummyCodes, [1, 8, 2]) });
-      if (encoderSession) {
-        const dummyAudio = new Float32Array(960);
-        await encoderSession.run({ input_values: new ort.Tensor('float32', dummyAudio, [1, 1, 960]) });
+      for (const b of [2, 1]) { // batched and split passes
+        const out = await mainSession.run({
+          input_ids: T_('int64', new BigInt64Array(b * 8 * 4).fill(1024n), [b, 8, 4]),
+          audio_mask: T_('bool', new Uint8Array(b * 4), [b, 4]),
+          attention_mask: T_('bool', new Uint8Array(b * 16).fill(1), [b, 1, 4, 4]),
+        });
+        out.audio_logits.dispose();
       }
+      await decoderSession.run({ audio_codes: T_('int64', new BigInt64Array(8 * 2), [1, 8, 2]) });
     } catch (e) { /* warm-up errors are non-fatal */ }
 
-    postMessage({ type: 'ready', backend: actualBackend, encoderAvailable: !!encoderSession });
+    postMessage({ type: 'ready', backend: actualBackend, encoderAvailable: true });
   } catch (err) {
     postMessage({ type: 'error', message: `Init failed: ${err.message}` });
   }
+}
+
+// ─── Voice encoder (loaded on first use) ────────────────────────────────────
+
+let encoderBytes = null;     // Promise<ArrayBuffer> — the download, outside the job queue
+let encoderFailed = false;   // the session can't be created on this device
+
+function fetchEncoderBytes() {
+  if (!modelBase) return Promise.reject(new Error('models not loaded yet'));
+  if (!encoderBytes) {
+    encoderBytes = (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const url = `${modelBase}/omnivoice-encoder-fixed.onnx`;
+      const info = await inspectFile(cache, url);
+      let loaded = info.cachedBytes, lastPost = 0;
+      const post = (force = false) => {
+        const now = performance.now();
+        if (!force && now - lastPost < 250) return;
+        lastPost = now;
+        const of = info.size ? ` of ${(info.size / 1e6).toFixed(0)} MB` : ' MB';
+        postMessage({
+          type: 'progress', stage: 'encoder-download', loadedBytes: loaded, totalBytes: info.size || null,
+          detail: `Downloading the voice encoder (one-time) — ${(loaded / 1e6).toFixed(0)}${of}`,
+        });
+      };
+      if (!info.complete) post(true);
+      const buf = await loadFile(cache, url, { size: info.size, onBytes: (n) => { loaded += n; post(); } });
+      if (!info.complete) postMessage({ type: 'progress', stage: 'encoder-download', done: true, detail: 'Voice encoder ready' });
+      return buf;
+    })();
+    encoderBytes.catch(() => { encoderBytes = null; }); // a failed download can be retried
+  }
+  return encoderBytes;
+}
+
+// Runs inside the job queue (session creation must not overlap other ORT calls)
+async function ensureEncoder() {
+  if (encoderSession) return true;
+  if (encoderFailed) return false;
+  const buf = await fetchEncoderBytes();
+  try {
+    try {
+      encoderSession = await ort.InferenceSession.create(buf, { executionProviders: sessionEps });
+    } catch (e) {
+      console.warn('Encoder WebGPU failed, falling back to WASM:', e.message);
+      encoderSession = await ort.InferenceSession.create(buf, { executionProviders: ['wasm'] });
+    }
+  } catch (e) {
+    console.warn('[encoder] unavailable on this device:', e.message);
+    encoderFailed = true;
+    postMessage({ type: 'encoder-status', available: false });
+    return false;
+  }
+  return true;
 }
 
 // ─── Reference audio encoding ───────────────────────────────────────────────
@@ -650,11 +598,11 @@ function expandTokens(flat, C) {
 }
 
 async function encodeReference({ requestId, refAudio }) {
-  if (!encoderSession) {
-    postMessage({ type: 'encode-error', requestId, code: 'encoder-unavailable', message: 'Voice encoder not available on this device' });
-    return;
-  }
   try {
+    if (!(await ensureEncoder())) {
+      postMessage({ type: 'encode-error', requestId, code: 'encoder-unavailable', message: 'Voice encoder not available on this device' });
+      return;
+    }
     postMessage({ type: 'progress', stage: 'encoding', detail: 'Analyzing voice...' });
     const r = await encodeRefPcm(refAudio);
     postMessage({ type: 'encoded', requestId, tokens: r.tokens, tokenCount: r.tokenCount, numCodebooks: r.numCodebooks, duration: r.duration }, [r.tokens.buffer]);
@@ -665,10 +613,13 @@ async function encodeReference({ requestId, refAudio }) {
 
 // ─── Synthesize ─────────────────────────────────────────────────────────────
 
+const SHORT_TEXT_TOKENS = 100; // ~4 s
+const HEADROOM_TOKENS = 12;    // ~0.5 s
+
 async function synthesize(params) {
   const {
     jobId = null,
-    text, lang = null, refAudio = null, refText = null, refTokens = null,
+    text, lang = null, refAudio = null, refText = null, refTokens = null, refRateTokens = null,
     instruct = null,
     numStep = 32, guidanceScale = 2.0, tShift = 0.1, speed = 1.0, // OmniVoice defaults
     seed = null,
@@ -688,12 +639,12 @@ async function synthesize(params) {
     if (refTokens && refTokens.length >= C) {
       refAudioTokens = expandTokens(refTokens, C);
       postMessage({ type: 'progress', stage: 'encoding', detail: `Using cached voice (${refAudioTokens[0].length} tokens)` });
-    } else if (refAudio && encoderSession) {
+    } else if (refAudio && await ensureEncoder()) {
       postMessage({ type: 'progress', stage: 'encoding', detail: 'Encoding reference audio...' });
       const enc = await encodeRefPcm(refAudio);
       refAudioTokens = expandTokens(enc.tokens, enc.numCodebooks);
       postMessage({ type: 'progress', stage: 'encoding', detail: `Encoded: ${enc.tokenCount} tokens (${enc.duration.toFixed(1)}s)` });
-    } else if (refAudio && !encoderSession) {
+    } else if (refAudio) {
       postMessage({ type: 'progress', stage: 'warning', detail: 'Voice cloning unavailable on this device (not enough memory for encoder)' });
     }
 
@@ -701,9 +652,16 @@ async function synthesize(params) {
     // mixing a real token count with the default text (or vice versa) skews the
     // estimate ~10x. estimateTargetTokens falls back to its internal defaults
     // whenever either half is missing.
+    // refRateTokens: a chained reference's token count without the headroom
+    // below, so headroom never makes the following chunks slower.
     const estRefText = refAudioTokens ? refText : null;
-    const estRefTokens = refAudioTokens ? refAudioTokens[0].length : null;
-    let numTargetTokens = Math.min(estimateTargetTokens(text, estRefText, estRefTokens, speed), 700);
+    const estRefTokens = refAudioTokens ? (refRateTokens ?? refAudioTokens[0].length) : null;
+    const estimate = estimateTargetTokens(text, estRefText, estRefTokens, speed);
+    // Short texts get headroom: the estimate scales with text length, the
+    // slowdown at the end of a sentence doesn't, and short outputs ran out of
+    // time mid-word. Unused time ends as trailing silence, which gets trimmed.
+    const headroom = estimate < SHORT_TEXT_TOKENS ? HEADROOM_TOKENS : 0;
+    let numTargetTokens = Math.min(estimate + headroom, 700);
 
     postMessage({ type: 'progress', stage: 'preparing', detail: `Target: ${numTargetTokens} tokens` });
 
@@ -729,6 +687,7 @@ async function synthesize(params) {
       for (let i = 0; i < tokens.length; i++) flat[i] = Number(tokens[i]);
       reply.tokens = flat;
       reply.tokenCount = numTargetTokens;
+      reply.rateTokens = numTargetTokens - headroom;
       transfers.push(flat.buffer);
     }
     postMessage(reply, transfers);
@@ -767,5 +726,21 @@ self.onmessage = (e) => {
   // Snapshot the cancel counter at arrival so a cancel that lands while this
   // job is still queued (e.g. behind an encode) is honored when it runs.
   if (msg.type === 'synthesize') msg._cancelBaseline = cancelCounter;
-  jobQueue = jobQueue.then(() => handleMessage(msg)).catch((err) => console.error('[worker] job failed:', err));
+  const enqueue = () => {
+    jobQueue = jobQueue.then(() => handleMessage(msg)).catch((err) => console.error('[worker] job failed:', err));
+  };
+  // The encoder downloads outside the queue (generation keeps running
+  // meanwhile); the encode job is queued once the file is here.
+  if (msg.type === 'prefetch-encoder') {
+    if (!encoderSession && !encoderFailed) fetchEncoderBytes().catch((err) => console.warn('[encoder] download failed:', err.message));
+    return;
+  }
+  if (msg.type === 'encode-reference' && !encoderSession && !encoderFailed) {
+    fetchEncoderBytes().then(enqueue, (err) => postMessage({
+      type: 'encode-error', requestId: msg.requestId, code: 'encode-failed',
+      message: `Could not download the voice encoder: ${err.message}`,
+    }));
+    return;
+  }
+  enqueue();
 };

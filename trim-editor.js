@@ -1,15 +1,16 @@
 /**
  * trim-editor.js — TrimEditor: choose the part of a longer clip to use as a
  * voice reference. Drag the start/end handles or the whole window, click
- * outside it to move it there, preview with a playhead. Released handles
- * snap to the quietest point nearby so a cut never lands mid-word. Clips
- * longer than the main view get an overview strip for navigation.
+ * outside it to move it there, preview with a playhead. A newly placed
+ * selection snaps to the quietest points nearby so it doesn't cut mid-word;
+ * handle and window drags after that are exact. Clips longer than the main
+ * view get an overview strip for navigation.
  */
 
 import { drawBarVisualizer } from './player.js';
 import { quietestPoint, defaultSelection } from './audio-postprocess.js?v=2';
 
-const VIEW_S = 30;      // main view width for long clips
+const VIEW_S = 45;      // main view width for long clips (room around a 30 s selection)
 const SNAP_S = 0.15;    // snap search radius around a released edge
 const MIN_LEN_S = 0.5;  // the handles can't cross
 const STEP_S = 0.1;     // arrow-key nudge (Shift: 1 s)
@@ -91,14 +92,20 @@ export class TrimEditor {
     this.playhead.style.left = `${((sample - this.viewStart) / vl) * 100}%`;
   }
 
+  /** Full redraw (after load / resize). */
   redraw() {
     if (!this.pcm) return;
-    drawBarVisualizer(this.canvas, this.pcm.subarray(this.viewStart, this.viewEnd));
+    // The overview spans the whole clip (up to 30 min), so it's only drawn here
     if (this.overview && this._long) drawBarVisualizer(this.overview, this.pcm, null);
-    this._layout();
+    this._drawMain();
   }
 
   // ── Internals ──
+
+  _drawMain() {
+    drawBarVisualizer(this.canvas, this.pcm.subarray(this.viewStart, this.viewEnd));
+    this._layout();
+  }
 
   _computeLoudness() {
     const frame = Math.round(this.sr / 100);
@@ -151,7 +158,7 @@ export class TrimEditor {
   _emit(final) { this.onChange(this.getSelection(), { final }); }
 
   _update(final = false) {
-    if (this._fitView()) this.redraw(); else this._layout();
+    if (this._fitView()) this._drawMain(); else this._layout();
     this._emit(final);
   }
 
@@ -223,8 +230,12 @@ export class TrimEditor {
       this.main.removeEventListener('pointermove', onMove);
       this.main.removeEventListener('pointerup', onUp);
       this.main.removeEventListener('pointercancel', onUp);
-      if (moved) this._snap(mode === 'new' || mode === 'move' ? 'both' : mode);
-      else if (mode === 'new') { this._moveTo(s0 - (this.end - this.start) / 2); this._snap('both'); }
+      // A newly placed selection snaps to quiet points; dragging a handle or the
+      // window afterwards is exact, so small adjustments stay where they're dropped
+      if (mode === 'new') {
+        if (!moved) this._moveTo(s0 - (this.end - this.start) / 2);
+        this._snap('both');
+      }
       this._update(true);
     };
     this.main.addEventListener('pointermove', onMove);
@@ -241,7 +252,7 @@ export class TrimEditor {
       const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
       this._moveTo(f * this.pcm.length - (this.end - this.start) / 2);
       this._fitView(true);
-      this.redraw();
+      this._drawMain();
       this._emit(false);
     };
     wrap.setPointerCapture(e.pointerId);

@@ -351,6 +351,16 @@
     background: #0f131a; color: #94a3b8; cursor: pointer; transition: all 0.15s;
   }
   .wiz-dropzone:hover, .wiz-dropzone.dragging { border-color: rgba(74, 222, 128, 0.6); background: rgba(74, 222, 128, 0.04); color: #d1d5db; }
+  .wiz-dropzone.loading { cursor: progress; opacity: 0.6; pointer-events: none; }
+  .asr-btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid #2d3748; background: #0f131a; color: #94a3b8; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all 0.15s; white-space: nowrap;
+  }
+  .asr-btn:hover:not(:disabled) { border-color: rgba(74, 222, 128, 0.6); color: #d1d5db; }
+  .asr-btn:disabled { cursor: default; opacity: 0.6; }
+  .asr-btn.busy { cursor: progress; opacity: 1; color: #4ade80; border-color: rgba(74, 222, 128, 0.4); }
+  .asr-btn svg { width: 14px; height: 14px; flex: none; }
 
   .review-wave-wrap { background: linear-gradient(180deg, #0f131a, #080b10); border: 1px solid #2d3748; border-radius: 14px; padding: 8px 8px 10px; }
   /* Trim editor (voice wizard review step) */
@@ -668,8 +678,8 @@
             <div class="wiz-dropzone" id="wiz-dropzone" role="button" tabindex="0" aria-label="Drop an audio file here or click to browse">
               <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
               <div class="text-sm font-semibold text-white">Drop an audio file here</div>
-              <div class="text-xs text-omni-text-muted">or click to browse &mdash; MP3, WAV, M4A, OGG &middot; longer files are fine, you pick the part to clone next</div>
-              <input type="file" id="wiz-file-input" accept="audio/*" class="hidden"/>
+              <div class="text-xs text-omni-text-muted">or click to browse &mdash; MP3, WAV, M4A, OGG or a video &middot; long recordings are fine, you pick the part to clone next</div>
+              <input type="file" id="wiz-file-input" accept="audio/*,video/*" class="hidden"/>
             </div>
             <div id="wiz-upload-error" class="hidden text-xs text-amber-400/90 text-center" role="status"></div>
           </div>
@@ -693,7 +703,13 @@
               <p id="wiz-trim-info" class="text-[10px] text-omni-text-muted/40" style="padding:6px 4px 0;" aria-live="polite"></p>
             </div>
             <div>
-              <label for="wiz-transcript" class="block text-omni-text-muted text-xs uppercase tracking-wider mb-2 font-semibold">Transcript</label>
+              <div class="flex items-center justify-between mb-2 gap-2">
+                <label for="wiz-transcript" class="block text-omni-text-muted text-xs uppercase tracking-wider font-semibold">Transcript</label>
+                <button type="button" id="wiz-asr-btn" class="asr-btn">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z"/><path d="M19 11a7 7 0 01-14 0M12 18v3"/></svg>
+                  <span id="wiz-asr-label">Transcribe automatically</span>
+                </button>
+              </div>
               <textarea id="wiz-transcript" rows="3" maxlength="500" class="w-full bg-omni-bg border border-omni-border rounded-xl px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40 resize-none" placeholder="Type the exact words spoken in the audio"></textarea>
               <p class="mt-1 text-[10px] text-omni-text-muted/40" id="wiz-transcript-hint"></p>
             </div>
@@ -888,6 +904,21 @@
       <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
         <div>
           <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.4.0</span>
+            <span class="text-[10px] text-omni-text-muted/40">Oct 9, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>Automatic transcription for new voices: Whisper runs on your device and fills in the words of the selected part (~100 languages, one-time 0.5 GB download)</li>
+            <li>Faster generation on the new WebGPU runtime, up to 1.5&times; with long cloned-voice references</li>
+            <li>The first download is several times faster and resumes where it stopped</li>
+            <li>Faster start: the voice encoder only loads when you clone a voice</li>
+            <li>No file size limit for uploads: long recordings and videos work, up to 30 minutes are loaded</li>
+            <li>Trim handles stay exactly where you drop them; only a newly placed selection snaps to pauses</li>
+            <li>Fixed words getting cut off at the end of short sentences: a short last sentence is no longer generated on its own, and short parts get a little extra time</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
+          <div class="flex items-center gap-2 mb-1">
             <span class="text-[11px] font-bold text-omni-neon">v1.3.0</span>
             <span class="text-[10px] text-omni-text-muted/40">Oct 9, 2026</span>
           </div>
@@ -989,7 +1020,7 @@
   <!-- Disclaimer & Legal -->
   <div class="text-center text-omni-text-muted/60 text-[10px] leading-relaxed max-w-lg px-4">
     <p class="mb-1"><strong class="text-omni-text-muted/80">Disclaimer &amp; Legal Notice</strong></p>
-    <p class="mb-2"><strong class="text-omni-text-muted/80">How it works.</strong> All speech synthesis runs locally in your browser. No audio, text, or voice data is uploaded to any server. However, on first use (and after cache clears), the app downloads AI model weights (~2.5&nbsp;GB) from <strong class="text-omni-text-muted/80">Hugging&nbsp;Face</strong> (huggingface.co) and runtime libraries from <strong class="text-omni-text-muted/80">jsDelivr</strong> (cdn.jsdelivr.net). These downloads expose your IP address, browser user-agent, and referrer to those services under their respective privacy policies. Once cached, no further network requests are made during synthesis.</p>
+    <p class="mb-2"><strong class="text-omni-text-muted/80">How it works.</strong> All speech synthesis and transcription runs locally in your browser. No audio, text, or voice data is uploaded to any server. However, on first use (and after cache clears), the app downloads AI model weights (~2.5&nbsp;GB, plus ~0.65&nbsp;GB when you first clone a voice and ~0.5&nbsp;GB if you use automatic transcription) from <strong class="text-omni-text-muted/80">Hugging&nbsp;Face</strong> (huggingface.co) and runtime libraries from <strong class="text-omni-text-muted/80">jsDelivr</strong> (cdn.jsdelivr.net). These downloads expose your IP address, browser user-agent, and referrer to those services under their respective privacy policies. Once cached, no further network requests are made during synthesis.</p>
     <p class="mb-2"><strong class="text-omni-text-muted/80">AI-generated content.</strong> All audio produced by this tool is synthetic speech generated by an AI model (<a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">OmniVoice</a>). Downloaded MP3 files contain machine-readable metadata (ID3v2) identifying them as AI-generated in accordance with EU&nbsp;AI&nbsp;Act Art.&nbsp;50. Do not remove or alter this metadata.</p>
     <p class="mb-2"><strong class="text-omni-text-muted/80">User obligations under the EU&nbsp;AI&nbsp;Act.</strong> If you publish or distribute audio generated by this tool, you are legally required to disclose its synthetic nature to your audience (Art.&nbsp;50(4)), including audible disclaimers where applicable. Using this tool to impersonate real individuals without their explicit consent, to create deceptive deepfakes, or to strip or circumvent AI content-marking is prohibited and may constitute a violation of the EU&nbsp;AI&nbsp;Act and other applicable law.</p>
     <p class="mb-2"><strong class="text-omni-text-muted/80">No warranty.</strong> This tool is provided as-is, without warranty of any kind, for personal, creative, and research purposes. The developers accept no liability for the content users generate, for any downstream use or misuse, or for the availability, accuracy, or conduct of third-party services (Hugging&nbsp;Face, jsDelivr, GitHub).</p>
@@ -997,7 +1028,7 @@
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px]">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.3.0</button>
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.4.0</button>
   </div>
 
 
@@ -1009,7 +1040,7 @@
   });
 
   // Changelog toggle
-  const CURRENT_VERSION = 'v1.3.0';
+  const CURRENT_VERSION = 'v1.4.0';
   document.getElementById('version-btn').textContent = CURRENT_VERSION;
   const changelogPanel = document.getElementById('changelog-panel');
   function toggleChangelog(show) {
@@ -1114,7 +1145,7 @@
   lame.onload = () => {
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = 'app.js?v=8';
+    s.src = 'app.js?v=9';
     document.body.appendChild(s);
   };
   lame.onerror = () => {
