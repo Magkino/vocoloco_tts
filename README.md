@@ -16,6 +16,7 @@ VocoLoco uses WebGPU and WebAssembly to run a 600M-parameter diffusion TTS model
 - **600+ languages**: multilingual TTS powered by OmniVoice
 - **Streamed generation**: long texts (up to 2000 characters) are split into sentences and start playing within seconds
 - **Voice design**: control gender and pitch with simple toggles, lock a voice you like for reuse
+- **Speed control**: 0.85× to 1.1× tempo, applied after generation so the voice and its pitch stay the same
 - **Guided voice cloning**: a step-by-step wizard with curated reading scripts (the transcript fills itself in), live level meter, and instant voice testing
 - **Trim editor**: upload or record long audio (or use any part of a generation) and pick exactly the 3-30 s to clone; a new selection snaps to pauses, the handles then move freely. Preview playhead included
 - **Automatic transcription**: Whisper large-v3-turbo transcribes the selected part on your device (~100 languages, language detected automatically, 0.5 GB on first use)
@@ -73,6 +74,7 @@ vocoloco_tts/
 │   ├── unmask-schedule.js  # Diffusion unmasking schedule (port of OmniVoice)
 │   └── gpu-postprocess.js  # WebGPU compute shader for post-processing
 ├── audio-postprocess.js    # Chunk joins, reference prep, trim selection helpers
+├── time-stretch.js         # Pitch-preserving tempo change (WSOLA) for the speed slider
 ├── duration-estimator.js   # Estimates output length from input text
 ├── sentence-buffer.js      # Abbreviation-aware sentence splitting
 ├── lib/

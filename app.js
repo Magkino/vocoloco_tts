@@ -51,6 +51,9 @@ const waveformEl = $('waveform');
 const genderRow = $('gender-row');
 const pitchRow = $('pitch-row');
 const qualityRow = $('quality-row');
+const speedRow = $('speed-row');
+const speedEl = $('speed');
+const speedValue = $('speed-value');
 const charCount = $('char-count');
 const progressBar = $('progress-bar');
 const replayBtn = $('replay-btn');
@@ -463,6 +466,50 @@ initToggleRow(genderRow, { label: 'Gender', onChange: onDesignChange });
 initToggleRow(pitchRow, { label: 'Pitch', onChange: onDesignChange });
 initToggleRow(qualityRow, { label: 'Quality', onChange: (val) => { if (!isGenerating) qualityEl.value = val; } });
 
+// Speed: the worker stretches the finished audio (pitch unchanged). The model
+// itself always runs at its natural pace: giving it more time per sentence
+// (OmniVoice's speed < 1) changed cloned voices' pitch and timbre.
+// The slider runs -100..100 so 1.00× sits in the middle: the left half covers
+// SPEED_MIN..1, the right half 1..SPEED_MAX.
+const SPEED_KEY = 'vocoloco-tempo';
+const SPEED_MIN = 0.85, SPEED_MAX = 1.1;
+
+function positionToSpeed(p) {
+  const f = Math.max(-1, Math.min(1, p / 100));
+  return Math.round((1 + f * (f < 0 ? 1 - SPEED_MIN : SPEED_MAX - 1)) * 100) / 100;
+}
+
+function speedToPosition(v) {
+  return Math.round(100 * (v - 1) / (v < 1 ? 1 - SPEED_MIN : SPEED_MAX - 1));
+}
+
+function currentSpeed() {
+  const p = speedEl ? parseFloat(speedEl.value) : NaN;
+  return Number.isFinite(p) ? positionToSpeed(p) : 1;
+}
+
+function showSpeed() {
+  const label = `${currentSpeed().toFixed(2)}×`;
+  if (speedValue) speedValue.textContent = label;
+  if (speedEl) speedEl.setAttribute('aria-valuetext', label);
+}
+
+if (speedEl) {
+  const saved = parseFloat(localStorage.getItem(SPEED_KEY));
+  if (saved >= SPEED_MIN && saved <= SPEED_MAX) speedEl.value = String(speedToPosition(saved));
+  showSpeed();
+  speedEl.addEventListener('input', () => {
+    showSpeed();
+    localStorage.setItem(SPEED_KEY, String(currentSpeed()));
+  });
+  // Double-click: back to 1.00×
+  speedEl.addEventListener('dblclick', () => {
+    if (speedEl.disabled) return;
+    speedEl.value = '0';
+    speedEl.dispatchEvent(new Event('input'));
+  });
+}
+
 function getToggleVal(row) {
   const active = row.querySelector('.toggle-btn.active');
   return active ? active.dataset.val : '';
@@ -706,7 +753,7 @@ function sendJob(msg) {
 function initWorker() {
   rejectPendingEncodes('Engine restarted');
   resolveJob({ kind: 'cancelled' });
-  ttsWorker = new Worker('workers/tts-worker.js?v=7', { type: 'module' });
+  ttsWorker = new Worker('workers/tts-worker.js?v=8', { type: 'module' });
   ttsWorker.onerror = (e) => {
     console.error('Worker error:', e);
     setStatus('Engine failed to load — check the console and reload the page.');
@@ -1142,7 +1189,8 @@ function setGenerating(active) {
 }
 
 function lockVoiceControls(locked) {
-  for (const el of [genderRow, pitchRow, qualityRow, studioVoicePicker]) {
+  if (speedEl) speedEl.disabled = locked;
+  for (const el of [genderRow, pitchRow, qualityRow, speedRow, studioVoicePicker]) {
     if (!el) continue;
     el.style.pointerEvents = locked ? 'none' : 'auto';
     el.style.opacity = locked ? '0.5' : '1';
@@ -1194,6 +1242,7 @@ async function generate() {
     gain: null,
     chainRef: null,
     quality: parseInt(qualityEl.value),
+    tempo: currentSpeed(),
     voiceName: voice ? voice.name : null,
     hardKillTimer: null,
     lastStepMs: null,
@@ -1268,6 +1317,7 @@ function buildChunkMsg(i, ref) {
     numStep: s.quality,
     ...GEN_PARAMS,
     speed: 1.0,
+    tempo: s.tempo,
     seed: null,
     instruct: null,
     normalize: false,
@@ -1289,6 +1339,10 @@ function buildChunkMsg(i, ref) {
   } else {
     msg.instruct = ref.instruct;
   }
+  // No <|denoise|> with a reference (OmniVoice turns it on by default): it lets
+  // the model produce a cleaned-up recording instead of copying the reference's,
+  // and in 7 of 10 seeds that came out as a different-sounding voice.
+  if (msg.refTokens) msg.denoise = false;
   return msg;
 }
 
@@ -1311,7 +1365,7 @@ function onChunkAudio(i, res) {
 
   if (i === 0) {
     if (currentView !== 'studio') switchView('studio');
-    player.beginStream({ estTotalSamples: Math.round((s.totalTokens / 25) * 24000) });
+    player.beginStream({ estTotalSamples: Math.round((s.totalTokens / s.tempo / 25) * 24000) });
     if (res.tokens) {
       // rateTokens: without the worker's headroom, for the following chunks' estimate
       s.chainRef = { tokens: res.tokens, tokenCount: res.tokenCount, rateTokens: res.rateTokens, text: s.chunks[0].text };
@@ -1456,10 +1510,12 @@ async function testVoice(voice, btn) {
     numStep: 8, // fast — this is a preview
     ...GEN_PARAMS,
     speed: 1.0,
+    tempo: currentSpeed(),
     instruct: null,
     seed: null,
     refText: voice.refText,
     normalize: true,
+    denoise: false, // see buildChunkMsg
   };
   if (voice.tokens) msg.refTokens = new Int32Array(voice.tokens);
   else msg.refAudio = new Float32Array(voice.refAudio);

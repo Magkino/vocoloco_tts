@@ -10,6 +10,7 @@ import { AutoTokenizer, env as tfEnv } from 'https://cdn.jsdelivr.net/npm/@huggi
 import { estimateTargetTokens } from '../duration-estimator.js';
 import { addEndPunctuation } from '../sentence-buffer.js?v=2'; // ?v: a stale cached copy lacks this export
 import { trimAndFade, peakAbs } from '../audio-postprocess.js';
+import { timeStretch } from '../time-stretch.js';
 import { GpuPostProcessor } from './gpu-postprocess.js?v=2';
 import { unmaskSchedule } from './unmask-schedule.js';
 import { inspectFile, loadFile } from './model-files.js';
@@ -622,8 +623,10 @@ async function synthesize(params) {
     text, lang = null, refAudio = null, refText = null, refTokens = null, refRateTokens = null,
     instruct = null,
     numStep = 32, guidanceScale = 2.0, tShift = 0.1, speed = 1.0, // OmniVoice defaults
+    tempo = 1.0, // speed slider: stretches the finished audio, pitch unchanged
     seed = null,
     returnTokens = false, normalize = true,
+    denoise = true, // OmniVoice default; the app turns it off when there is a reference
   } = params;
 
   try {
@@ -667,7 +670,7 @@ async function synthesize(params) {
 
     const inputs = await prepareInferenceInputs(text, numTargetTokens, tokenizer, config, {
       lang, instruct, refText: refAudioTokens ? refText : null, refAudioTokens,
-      denoise: true,
+      denoise,
     });
 
     const tokens = await generateIterative(inputs, config, numStep, guidanceScale, tShift);
@@ -676,7 +679,8 @@ async function synthesize(params) {
     const rawPcm = await decodeTokens(tokens, C, numTargetTokens);
 
     postMessage({ type: 'progress', stage: 'postprocessing', detail: 'Processing audio...' });
-    const { pcm, peak } = postProcessAudio(rawPcm, config.sampling_rate, normalize);
+    const stretched = timeStretch(rawPcm, config.sampling_rate, tempo);
+    const { pcm, peak } = postProcessAudio(stretched, config.sampling_rate, normalize);
 
     const reply = { type: 'audio', jobId, pcm, sampleRate: config.sampling_rate, peak };
     const transfers = [pcm.buffer];

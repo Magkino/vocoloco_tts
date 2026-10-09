@@ -361,6 +361,10 @@
   .asr-btn:disabled { cursor: default; opacity: 0.6; }
   .asr-btn.busy { cursor: progress; opacity: 1; color: #4ade80; border-color: rgba(74, 222, 128, 0.4); }
   .asr-btn svg { width: 14px; height: 14px; flex: none; }
+  .speed-range { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 999px; background: #1e293b; outline: none; cursor: pointer; }
+  .speed-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #4ade80; border: 2px solid #0f131a; box-shadow: 0 0 10px rgba(74, 222, 128, 0.5); }
+  .speed-range::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #4ade80; border: 2px solid #0f131a; box-shadow: 0 0 10px rgba(74, 222, 128, 0.5); }
+  .speed-range:focus-visible { outline: 2px solid rgba(74, 222, 128, 0.6); outline-offset: 4px; }
 
   .review-wave-wrap { background: linear-gradient(180deg, #0f131a, #080b10); border: 1px solid #2d3748; border-radius: 14px; padding: 8px 8px 10px; }
   /* Trim editor (voice wizard review step) */
@@ -533,6 +537,17 @@
             <div class="toggle-btn active" data-val="20">High</div>
             <div class="toggle-btn" data-val="32">Best</div>
           </div>
+        </div>
+
+        <!-- Speed -->
+        <div id="speed-row">
+          <div class="flex items-center justify-between mb-2">
+            <label for="speed" class="block text-omni-text-muted text-xs uppercase tracking-wider font-semibold">Speed</label>
+            <span id="speed-value" class="text-xs font-mono text-omni-text-muted">1.00&times;</span>
+          </div>
+          <!-- Position -100..100, 1.00× in the middle (mapping in app.js); double-click resets -->
+          <input type="range" id="speed" class="speed-range" min="-100" max="100" step="1" value="0" aria-label="Speech speed" aria-valuetext="1.00×">
+          <div class="flex text-[10px] text-omni-text-muted/40 mt-1"><span class="flex-1">Slower</span><span class="flex-1 text-center">Normal</span><span class="flex-1 text-right">Faster</span></div>
         </div>
       </div>
 
@@ -904,6 +919,16 @@
       <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
         <div>
           <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.4.1</span>
+            <span class="text-[10px] text-omni-text-muted/40">Oct 9, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>Speed slider (0.85&times; to 1.1&times;): changes the tempo without changing the voice or its pitch</li>
+            <li>Cloned voices stay true to the recording: fixed parts of a generation suddenly sounding like a different recording, with other background noise, breathing and timbre</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
+          <div class="flex items-center gap-2 mb-1">
             <span class="text-[11px] font-bold text-omni-neon">v1.4.0</span>
             <span class="text-[10px] text-omni-text-muted/40">Oct 9, 2026</span>
           </div>
@@ -1028,7 +1053,7 @@
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px]">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.4.0</button>
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.4.1</button>
   </div>
 
 
@@ -1040,7 +1065,7 @@
   });
 
   // Changelog toggle
-  const CURRENT_VERSION = 'v1.4.0';
+  const CURRENT_VERSION = 'v1.4.1';
   document.getElementById('version-btn').textContent = CURRENT_VERSION;
   const changelogPanel = document.getElementById('changelog-panel');
   function toggleChangelog(show) {
@@ -1145,7 +1170,7 @@
   lame.onload = () => {
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = 'app.js?v=9';
+    s.src = 'app.js?v=10';
     document.body.appendChild(s);
   };
   lame.onerror = () => {
