@@ -1,6 +1,6 @@
 #!/bin/sh
 # Mirror the model files into ./models (git-ignored) for local development, so
-# reloading the dev server doesn't re-download ~3.5 GB from Hugging Face.
+# reloading the dev server doesn't re-download ~5.5 GB from Hugging Face.
 # Only needs curl. Resumable: re-run to continue an interrupted download.
 #   docker run --rm -v "$PWD":/src -w /src curlimages/curl sh scripts/fetch-models.sh
 #   (or just: sh scripts/fetch-models.sh)
@@ -62,27 +62,22 @@ $TTS/omnivoice-main-split.onnx omnivoice-main-split.onnx
 $TTS/omnivoice-decoder.onnx omnivoice-decoder.onnx
 $TTS/omnivoice-encoder-fixed.onnx omnivoice-encoder-fixed.onnx
 $TTS/omnivoice-config.json omnivoice-config.json
+$TTS/tokenizer.json tokenizer.json
+$TTS/engine/omnivoice-f16.json engine/omnivoice-f16.json
+$TTS/engine/omnivoice-f16.bin engine/omnivoice-f16.bin
+$TTS/engine/decoder-f32.json engine/decoder-f32.json
+$TTS/engine/decoder-f32.bin engine/decoder-f32.bin
+$TTS/engine/encoder-f32.json engine/encoder-f32.json
+$TTS/engine/encoder-f32.bin engine/encoder-f32.bin
 EOF
 # The manifest goes last: the app only switches to the mirror once it exists.
 fetch "$TTS/omnivoice-main-manifest.json" omnivoice-main-manifest.json
 
-# Speech recognition for the voice wizard (Whisper large-v3-turbo, the files
-# the app loads on WebGPU). config.json goes last, like the manifest above.
-W=onnx-community/whisper-large-v3-turbo
-WR=$HF/$W/resolve/main
-run_all <<EOF
-$WR/onnx/encoder_model_q4f16.onnx $W/onnx/encoder_model_q4f16.onnx
-$WR/onnx/decoder_model_merged_q4f16.onnx $W/onnx/decoder_model_merged_q4f16.onnx
-$WR/generation_config.json $W/generation_config.json
-$WR/preprocessor_config.json $W/preprocessor_config.json
-$WR/tokenizer.json $W/tokenizer.json
-$WR/tokenizer_config.json $W/tokenizer_config.json
-$WR/special_tokens_map.json $W/special_tokens_map.json
-$WR/added_tokens.json $W/added_tokens.json
-$WR/normalizer.json $W/normalizer.json
-$WR/vocab.json $W/vocab.json
-$WR/merges.txt $W/merges.txt
-EOF
-fetch "$WR/config.json" "$W/config.json"
+# Speech recognition for the voice wizard (Whisper large-v3-turbo on the
+# engine, workers/asr-worker.js)
+run_all <<EOT
+$TTS/engine/whisper-i8.json engine/whisper-i8.json
+$TTS/engine/whisper-i8.bin engine/whisper-i8.bin
+EOT
 
 echo "Done. Restart the dev server: docker compose up --build --watch web"

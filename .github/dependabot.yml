@@ -1,0 +1,26 @@
+# Version updates for the workflow actions and the dev/CI base images (Dockerfile).
+# cooldown: only propose releases that are at least a week old.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  # package.json: Tailwind (build-tailwind.sh) and the ONNX Runtime version the app loads from
+  # jsDelivr (tests/deps.test.js fails until workers/tts-worker.js uses the new one too)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

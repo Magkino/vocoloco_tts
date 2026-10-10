@@ -1,0 +1,483 @@
+/*
+ * mobile.css — native app shell for phones. Every layout rule sits inside the
+ * phone media query below (the same 768 px breakpoint that already hid the
+ * sidebar, plus phones in landscape), so the desktop layout is untouched.
+ * Behaviour that needs JS (keyboard-aware toolbar, sheet dragging, current
+ * view) lives in mobile.js, which sets: html[data-view], .kb-open, .kb-text,
+ * .sheet-open and the --vv-top / --vv-h / --kb / --m-sab-max custom properties.
+ */
+
+/* Wording for touch screens ("Choose a file" instead of "Drop a file here") */
+.m-coarse { display: none; }
+@media (pointer: coarse) {
+  .m-fine { display: none; }
+  .m-coarse { display: inline; }
+}
+
+@keyframes m-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes m-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+@media (max-width: 768px), (pointer: coarse) and (max-height: 520px) {
+  :root {
+    --m-bar: 48px;          /* top bar */
+    --m-tabbar: 56px;       /* bottom tab bar */
+    --m-dock: 72px;         /* Generate button dock above the tab bar */
+    --m-sat: env(safe-area-inset-top, 0px);
+    /* The largest bottom inset so far, not the current one: with Safari's Top tab layout
+       env() slides 0 → 34 px along with the toolbar, and Safari moves the fixed bars a
+       frame before the page re-lays them out, so every step showed as a jolt */
+    --m-sab: max(env(safe-area-inset-bottom, 0px), env(safe-area-max-inset-bottom, 0px), var(--m-sab-max, 0px));
+    --m-sal: env(safe-area-inset-left, 0px);
+    --m-sar: env(safe-area-inset-right, 0px);
+    --m-pad: 16px;
+    --m-sep: rgba(255, 255, 255, 0.08);
+    --m-cell: #1a2028;
+    --m-sheet: #161c24;
+    --m-ease: cubic-bezier(0.32, 0.72, 0, 1);
+    color-scheme: dark;
+  }
+
+  /* ── Shell ──────────────────────────────────────────────────────────── */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none; /* no pull-to-refresh in the middle of a generation */
+    background: #0f131a;
+  }
+  html.sheet-open, html.sheet-open body { overflow: hidden; }
+  body {
+    display: block !important;
+    min-height: 100svh; /* not dvh: that changes on every frame while the browser's toolbar slides */
+    padding: 0 !important;
+    background-image: none !important;
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
+    -webkit-font-smoothing: antialiased;
+  }
+  .bg-glow, .text-glow, .sidebar { display: none !important; }
+
+  /* Top bar: brand, translucent material, under the status bar in standalone mode */
+  body > header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 60 !important; /* over Tailwind's z-10 */
+    height: calc(var(--m-bar) + var(--m-sat));
+    margin: 0 !important;
+    padding: var(--m-sat) calc(var(--m-pad) + var(--m-sar)) 0 calc(var(--m-pad) + var(--m-sal));
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(15, 19, 26, 0.8);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 0.5px solid var(--m-sep);
+  }
+  body > header h1 {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 !important; font-size: 17px !important; line-height: 1 !important;
+    font-weight: 700 !important; letter-spacing: 0 !important;
+  }
+  body > header h1::before {
+    content: ''; width: 18px; height: 18px; border-radius: 50%; flex: none;
+    border: 2px solid #4ade80;
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.45), inset 0 0 0 3px #0f131a, inset 0 0 0 9px rgba(74, 222, 128, 0.5);
+  }
+  body > header h2, body > header p { display: none !important; }
+  /* while something runs, the activity pill takes the brand's place */
+  body > header:has(.activity:not(.hidden)) h1 { display: none !important; }
+  body > header .activity { height: 28px; margin: 0; padding: 0 12px; max-width: 100%; font-size: 13px; }
+
+  main {
+    width: 100% !important; max-width: none !important;
+    padding: calc(var(--m-bar) + var(--m-sat)) 0 0 !important;
+    border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+    background: transparent !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important; /* fixed children need the viewport as containing block */
+  }
+  .main-layout { flex-direction: column !important; height: auto !important; min-height: 0 !important; }
+  .content-area { background: transparent !important; border-radius: 0 !important; overflow: visible !important; }
+
+  .app-view {
+    gap: 16px !important;
+    padding: 12px calc(var(--m-pad) + var(--m-sar)) calc(var(--m-tabbar) + var(--m-sab) + 24px) calc(var(--m-pad) + var(--m-sal)) !important;
+    animation: m-fade 0.2s ease !important; /* opacity only: a transform would re-anchor the fixed dock */
+  }
+  #view-studio { padding-bottom: calc(var(--m-tabbar) + var(--m-dock) + var(--m-sab) + 20px) !important; }
+
+  /* Bottom tab bar: solid, no backdrop-filter. Safari 26 paints the strip under its own
+     toolbar in the colour of a bottom fixed bar, which it can't read through a blur */
+  .mobile-tabs {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    display: flex !important; gap: 0 !important;
+    height: calc(var(--m-tabbar) + var(--m-sab));
+    padding: 0 var(--m-sar) var(--m-sab) var(--m-sal) !important;
+    background: #0f131a;
+    border-bottom: 0 !important;
+    border-top: 0.5px solid var(--m-sep);
+  }
+  /* The bar's colour carries on below it: whatever the browser reveals under the bar while
+     its toolbar slides away is bar, never page or black */
+  .mobile-tabs::after {
+    content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 160px;
+    background: inherit; pointer-events: none;
+  }
+  .mobile-tab {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    padding: 0 !important; border-radius: 0 !important; background: none !important;
+    color: #8b95a5; font-size: 11px !important; font-weight: 600 !important; letter-spacing: 0.01em;
+  }
+  .m-tab-icon {
+    width: 56px; height: 30px; border-radius: 15px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background-color 0.2s ease;
+  }
+  .m-tab-icon svg { width: 22px; height: 22px; }
+  .mobile-tab.active-tab { color: #4ade80; }
+  .mobile-tab.active-tab .m-tab-icon { background: rgba(74, 222, 128, 0.14); }
+  .mobile-tab:active .m-tab-icon { background: rgba(255, 255, 255, 0.08); }
+
+  /* The keyboard covers the bottom bars anyway; the tag toolbar docks there instead */
+  html.kb-open .mobile-tabs, html.kb-open .gen-dock { display: none !important; }
+
+  /* The About / legal footer lives in the Settings tab */
+  html[data-view]:not([data-view="settings"]) body > footer { display: none !important; }
+  html[data-view="settings"] #view-settings { padding-bottom: 8px !important; }
+  body > footer {
+    max-width: none !important; margin: 8px 0 0 !important; gap: 20px !important;
+    padding: 0 calc(var(--m-pad) + var(--m-sar)) calc(var(--m-tabbar) + var(--m-sab) + 24px) calc(var(--m-pad) + var(--m-sal));
+  }
+  body > footer a, body > footer button { min-height: 44px; }
+  body > footer .text-\[10px\] { font-size: 12px !important; }
+  body > footer .text-\[10px\] a, body > footer .text-\[10px\] button { min-height: 0; }
+
+  /* ── Global touch polish ────────────────────────────────────────────── */
+  a, select, input, textarea { touch-action: manipulation; }
+  button, [role="button"], [role="tab"], [role="radio"], .toggle-btn, .saved-voice, .vl-tag, .mobile-tab, .method-card, .wiz-dropzone {
+    touch-action: manipulation;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+  }
+  button:not(:disabled):active, [role="button"]:active, .toggle-btn:active, .vl-tag:active { opacity: 0.7; }
+  /* 16 px or larger: iOS zooms into smaller form fields */
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea, select { font-size: 16px !important; }
+
+  /* Section labels: iOS-style group headers */
+  .app-view label.uppercase { font-size: 13px !important; letter-spacing: 0.04em !important; }
+
+  /* Toasts drop in under the top bar */
+  #toast-stack {
+    top: calc(var(--m-bar) + var(--m-sat) + 8px) !important;
+    left: calc(12px + var(--m-sal)) !important; right: calc(12px + var(--m-sar)) !important;
+    align-items: center;
+  }
+  .vl-toast {
+    max-width: 100% !important; font-size: 14px !important; line-height: 1.4;
+    padding: 12px 16px !important; border-radius: 14px !important;
+  }
+  #update-toast {
+    left: calc(12px + var(--m-sal)) !important; right: calc(12px + var(--m-sar)) !important;
+    bottom: calc(var(--m-tabbar) + var(--m-sab) + 12px) !important;
+  }
+
+  /* Confirm dialogs become action sheets */
+  .vl-overlay {
+    align-items: flex-end !important;
+    background: rgba(0, 0, 0, 0.5) !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+    animation: m-fade 0.2s ease !important;
+  }
+  .vl-dialog {
+    position: relative; touch-action: none;
+    width: 100% !important; max-width: none !important;
+    border: 0 !important; border-top: 0.5px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 16px 16px 0 0 !important;
+    background: var(--m-cell) !important; box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.4) !important;
+    padding: 28px calc(20px + var(--m-sar)) calc(16px + var(--m-sab)) calc(20px + var(--m-sal)) !important;
+    animation: m-sheet-up 0.32s var(--m-ease);
+  }
+  .vl-dialog::before {
+    content: ''; position: absolute; top: 8px; left: 50%; width: 36px; height: 5px; margin-left: -18px;
+    border-radius: 3px; background: rgba(255, 255, 255, 0.22);
+  }
+  .vl-dialog h3 { font-size: 17px !important; text-align: center; margin-bottom: 6px; }
+  .vl-dialog p { font-size: 14px !important; text-align: center; }
+  .vl-dialog .vl-actions { flex-direction: column-reverse; gap: 10px !important; margin-top: 22px !important; }
+  .vl-dialog .vl-btn { width: 100%; min-height: 50px; font-size: 16px !important; border-radius: 14px !important; }
+
+  /* ── Studio ─────────────────────────────────────────────────────────── */
+  #view-studio > .m-status { order: 1; min-height: 0 !important; margin-bottom: -6px; }
+  #status { font-size: 13px !important; }
+  #view-studio > .m-text { order: 3; }
+  #studio-player { order: 4; }
+  #view-studio > .m-picker { order: 5; }
+  #view-studio > .m-controls { order: 6; }
+  #view-studio > .gen-dock { order: 7; }
+
+  #progress-bar { position: fixed !important; top: calc(var(--m-bar) + var(--m-sat) - 2px) !important; z-index: 61; }
+
+  /* Text box */
+  .text-card { padding: 14px 14px 10px !important; border-radius: 18px !important; }
+  #text-input {
+    padding: 2px 2px !important; /* lines up with the chips below */
+    font-size: 17px !important; line-height: 1.45 !important;
+    min-height: 120px; max-height: 45svh; /* svh: a long text must not grow while scrolling */
+    field-sizing: content;
+  }
+  #text-input:focus-visible { outline: none !important; }
+  .text-card:focus-within { box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.55), 0 0 16px rgba(74, 222, 128, 0.25); }
+  .text-card .text-right { font-size: 12px !important; margin-top: 6px !important; }
+  #loading-actions .vl-btn { min-height: 44px; font-size: 15px; border-radius: 12px; }
+
+  /* Tag chips: one swipeable row */
+  .vl-tag-bar {
+    flex-wrap: nowrap !important; align-items: center; gap: 0 !important;
+    margin: 10px -14px 0 !important; padding: 0 !important;
+  }
+  .vl-tag-scroll {
+    display: flex; flex: 1; min-width: 0; gap: 8px;
+    overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+    padding: 2px 14px;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+  .vl-tag-scroll::-webkit-scrollbar { display: none; }
+  .vl-tag {
+    flex: none; display: inline-flex; align-items: center;
+    min-height: 36px; padding: 0 14px !important; border-radius: 18px !important;
+    font-size: 15px !important; font-weight: 500; white-space: nowrap;
+  }
+  .m-kb-done { display: none; }
+
+  /* Keyboard open while writing: the tag row becomes an accessory bar on top of the keyboard */
+  html.kb-text #tag-bar {
+    position: fixed; left: 0; right: 0; z-index: 70;
+    top: calc(var(--vv-top, 0px) + var(--vv-h, 100dvh));
+    transform: translateY(-100%);
+    margin: 0 !important;
+    padding: 8px var(--m-sar) 8px var(--m-sal) !important;
+    background: rgba(30, 37, 47, 0.97);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+    border-top: 0.5px solid rgba(255, 255, 255, 0.12);
+  }
+  html.kb-text .vl-tag-scroll { padding: 2px 12px; }
+  html.kb-text .text-card { padding-bottom: 62px !important; } /* keeps the box from jumping when the row leaves */
+  html.kb-text .m-kb-done {
+    display: inline-flex; align-items: center; flex: none;
+    min-height: 40px; padding: 0 16px 0 10px; border: 0; background: none;
+    color: #4ade80; font-size: 16px; font-weight: 600;
+  }
+
+  /* Player */
+  #studio-player > div { border-radius: 18px !important; }
+  #studio-player .border-t { padding: 10px 12px !important; gap: 8px !important; }
+  #player-controls { width: 100%; gap: 8px !important; }
+  #player-controls > button {
+    flex: 1 1 0; min-width: max-content; min-height: 42px;
+    padding: 0 12px !important; border-radius: 12px !important; font-size: 14px !important;
+    white-space: nowrap;
+  }
+  #player-controls > #voice-lock-btn { flex-basis: 100%; }
+  #player-duration {
+    position: absolute; top: 8px; left: 10px;
+    padding: 2px 8px; border-radius: 9999px; background: rgba(15, 19, 26, 0.75);
+    font-size: 12px !important; pointer-events: none;
+  }
+  #player-duration:empty { display: none; }
+  /* Empty state until the first generation (app.js enables the controls then) */
+  #studio-player:has(#player-controls[style*="none"]) #waveform-wrap::after {
+    content: 'Your speech will play here';
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #5b6676; font-size: 14px; pointer-events: none;
+  }
+  #view-studio:has(#generate-btn.btn-cancel) #waveform-wrap::after { content: none; }
+
+  /* Voice picker: swipeable chips */
+  #view-studio > .m-picker { padding-top: 0 !important; border-top: 0 !important; }
+  #view-studio > .m-picker > div:first-child { margin-bottom: 8px !important; }
+  #manage-voices-link { padding: 10px 0 10px 16px; margin: -10px 0; font-size: 15px !important; color: #4ade80 !important; }
+  #studio-voice-picker {
+    flex-wrap: nowrap !important; gap: 8px !important;
+    overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+    margin: 0 calc(-1 * var(--m-pad)); padding: 2px var(--m-pad) !important;
+  }
+  #studio-voice-picker::-webkit-scrollbar { display: none; }
+  .saved-voice { flex: none; min-height: 40px; padding: 0 16px !important; font-size: 15px !important; white-space: nowrap; }
+
+  /* Voice settings as a grouped list */
+  #view-studio > .m-controls {
+    gap: 0 !important; padding: 0 14px;
+    background: var(--m-cell); border: 0.5px solid var(--m-sep); border-radius: 18px;
+  }
+  .m-controls > div { padding: 10px 0; border-bottom: 0.5px solid var(--m-sep); }
+  .m-controls > div:last-child { border-bottom: 0; padding-bottom: 12px; }
+  .m-controls > .m-row { display: flex; align-items: center; gap: 12px; }
+  .m-controls > .m-row > label {
+    flex: none; width: 64px; margin: 0 !important;
+    text-transform: none !important; letter-spacing: 0 !important;
+    font-size: 15px !important; font-weight: 500 !important; color: #e5e7eb !important;
+  }
+  .m-controls > .m-row > div { flex: 1; min-width: 0; }
+  #gender-row, #pitch-row, #quality-row {
+    background: rgba(118, 118, 128, 0.16) !important; border: 0 !important;
+    border-radius: 11px !important; padding: 3px !important; gap: 2px !important;
+  }
+  .toggle-btn {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 38px; padding: 0 6px !important; border-radius: 9px !important;
+    font-size: 15px !important;
+  }
+  .toggle-btn.active { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35) !important; }
+  #speed-row label { text-transform: none !important; letter-spacing: 0 !important; font-size: 15px !important; font-weight: 500 !important; color: #e5e7eb !important; }
+  #speed-value { font-size: 14px !important; color: #4ade80 !important; }
+  #speed-row > div:first-child { margin-bottom: 0 !important; }
+  .speed-range {
+    height: 32px; border-radius: 0;
+    background: linear-gradient(#273041, #273041) center / 100% 6px no-repeat;
+  }
+  .speed-range::-webkit-slider-thumb { width: 28px; height: 28px; border-width: 3px; }
+  .speed-range::-moz-range-thumb { width: 22px; height: 22px; border-width: 3px; }
+  #speed-row .text-\[10px\] { font-size: 12px !important; margin-top: 0 !important; }
+
+  /* Generate: fixed dock in thumb reach */
+  .gen-dock {
+    position: fixed; left: 0; right: 0; z-index: 55;
+    bottom: calc(var(--m-tabbar) + var(--m-sab));
+    padding: 14px calc(var(--m-pad) + var(--m-sar)) 10px calc(var(--m-pad) + var(--m-sal));
+    background: linear-gradient(to bottom, rgba(15, 19, 26, 0), rgba(15, 19, 26, 0.94) 40%);
+    pointer-events: none;
+  }
+  #generate-btn {
+    pointer-events: auto; height: 52px; padding: 0 16px !important;
+    border-radius: 14px !important; font-size: 17px !important;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    box-shadow: 0 6px 20px rgba(74, 222, 128, 0.22);
+  }
+  #generate-btn:disabled { opacity: 1 !important; background: #222a35 !important; color: #5b6676 !important; box-shadow: none !important; }
+  #generate-btn.btn-cancel { background: #2b1b20 !important; box-shadow: none; }
+
+  /* ── Voices ─────────────────────────────────────────────────────────── */
+  #voices-home > div:first-child h3, #view-library > div:first-child h3, #view-settings > h3 {
+    font-size: 28px !important; font-weight: 800 !important; letter-spacing: -0.01em;
+  }
+  #new-voice-btn { min-height: 36px; padding: 0 16px !important; border-radius: 18px !important; font-size: 15px !important; }
+  #voices-empty-cta { min-height: 50px; font-size: 16px !important; border-radius: 14px !important; }
+  .voice-card { padding: 14px 16px; border-radius: 18px; }
+  .voice-card .vc-name { font-size: 16px; }
+  .voice-card .vc-meta { font-size: 13px; }
+  .voice-card .vc-btn { min-height: 40px; padding: 0 12px; border-radius: 11px; font-size: 14px; }
+  .voice-card > div:last-child .vc-btn { flex: 1 1 0; }
+  .voice-card > div:first-child .vc-btn { min-width: 40px; }
+  .voice-name-input { min-height: 36px; }
+
+  /* Wizard: a full-height sheet over the tab bar */
+  #voice-wizard {
+    position: fixed; z-index: 80; left: 0; right: 0;
+    top: calc(var(--vv-top, 0px) + var(--m-sat) + 10px);
+    bottom: var(--kb, 0px);
+    gap: 18px !important;
+    overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+    padding: 0 calc(var(--m-pad) + var(--m-sar)) calc(20px + var(--m-sab)) calc(var(--m-pad) + var(--m-sal));
+    background: var(--m-sheet); border-radius: 16px 16px 0 0;
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.55), 0 -8px 30px rgba(0, 0, 0, 0.4);
+    animation: m-sheet-up 0.4s var(--m-ease);
+  }
+  #voice-wizard .wiz-head {
+    position: sticky; top: 0; z-index: 5; flex: none;
+    margin: 0 calc(-1 * (var(--m-pad) + var(--m-sar))) 0 calc(-1 * (var(--m-pad) + var(--m-sal)));
+    padding: 18px calc(6px + var(--m-sar)) 6px calc(6px + var(--m-sal));
+    background: var(--m-sheet); border-bottom: 0.5px solid var(--m-sep);
+    touch-action: none; /* drag down to close (mobile.js) */
+  }
+  #voice-wizard .wiz-head::before {
+    content: ''; position: absolute; top: 7px; left: 50%; width: 36px; height: 5px; margin-left: -18px;
+    border-radius: 3px; background: rgba(255, 255, 255, 0.22);
+  }
+  #wiz-title { flex: 1; text-align: center; font-size: 17px !important; }
+  .wiz-back, .wiz-close { min-width: 44px; min-height: 44px; margin: 0 !important; font-size: 22px; }
+  .wiz-close { font-size: 26px; }
+  #wiz-step-method > p, #voice-wizard p.text-sm { font-size: 15px !important; }
+  .wiz-methods { flex-direction: column; }
+  .method-card {
+    display: grid; grid-template-columns: 40px 1fr; column-gap: 14px; row-gap: 2px; align-items: center;
+    padding: 16px; border-radius: 16px;
+  }
+  .method-card .method-icon { grid-row: span 2; width: 40px; height: 40px; }
+  .method-card .text-sm { font-size: 16px !important; }
+  .method-card .text-xs { font-size: 14px !important; }
+  .method-card .method-badge { top: 12px; right: 12px; }
+  .wiz-dropzone { padding: 40px 20px; }
+  .wiz-dropzone .text-xs { font-size: 14px !important; }
+  .mic-select { min-height: 44px; }
+  .wiz-record-btn { width: 80px; height: 80px; }
+  #wiz-record-label, #wiz-rec-zone { font-size: 13px !important; }
+  #wiz-review-wave { height: 96px !important; }
+  .trim-handle { width: 36px; margin-left: -18px; }
+  .trim-handle::after { left: 16px; }
+  .trim-handle::before {
+    content: ''; position: absolute; left: 11px; top: 50%; width: 14px; height: 24px; margin-top: -12px;
+    border-radius: 7px; background: #4ade80; box-shadow: 0 0 8px rgba(74, 222, 128, 0.6);
+  }
+  #wiz-review-play { min-height: 44px; padding: 0 18px !important; font-size: 14px !important; }
+  .asr-btn { min-height: 34px; max-width: 100%; padding: 0 12px; font-size: 13px; }
+  .asr-btn::after { content: ''; position: absolute; inset: -5px 0; } /* 44 px to tap, 34 px to see */
+  div:has(> #wiz-asr-btn) { flex-wrap: wrap; }
+  #wiz-trim-info, #wiz-transcript-hint { font-size: 12px !important; }
+  #voice-wizard input:focus, #voice-wizard textarea:focus, .voice-name-input:focus {
+    border-color: rgba(74, 222, 128, 0.55) !important; box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.35) !important;
+  }
+  .wiz-actions {
+    position: sticky; bottom: calc(-20px - var(--m-sab)); z-index: 5;
+    margin: 0 calc(-1 * var(--m-pad)) calc(-20px - var(--m-sab));
+    padding: 16px var(--m-pad) calc(12px + var(--m-sab));
+    background: linear-gradient(to bottom, rgba(22, 28, 36, 0), var(--m-sheet) 30%);
+    order: 1; /* the save hint (#wiz-save-blocker) goes above the bar, not under it */
+  }
+  .wiz-actions > button { min-height: 50px; font-size: 16px !important; border-radius: 14px !important; }
+  #wiz-step-done .flex.gap-2 { flex-direction: column; width: 100%; }
+  #wiz-step-done .flex.gap-2 > button { min-height: 50px; font-size: 16px !important; }
+  #wiz-mic-error button { min-height: 44px; }
+
+  /* ── Library ────────────────────────────────────────────────────────── */
+  #view-library > div:first-child { flex-direction: column; align-items: flex-start; gap: 2px; margin-bottom: 0 !important; }
+  #library-total { font-size: 14px !important; }
+  .library-item { padding: 12px 14px 14px; border-radius: 18px; }
+  .library-item > div:last-child > div:first-child > div:first-child {
+    font-size: 15px !important; white-space: normal !important;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .library-item > div:last-child > div:first-child > div:last-child { font-size: 13px !important; }
+  .library-item > div:last-child > div:last-child { width: 100%; flex-wrap: nowrap !important; }
+  .library-item [data-action] {
+    flex: 1 1 0; min-height: 40px; padding: 0 4px !important;
+    border-radius: 11px !important; font-size: 13px !important; white-space: nowrap;
+  }
+
+  /* ── Settings ───────────────────────────────────────────────────────── */
+  #view-settings > div:first-of-type .text-sm > div { min-height: 44px; }
+  #view-settings button { min-height: 52px; }
+  /* Row title with the explanation underneath, like a settings list */
+  #view-settings button.text-left { flex-wrap: wrap; justify-content: flex-start !important; row-gap: 1px; padding-top: 10px !important; padding-bottom: 10px !important; font-size: 15px !important; }
+  #view-settings button.text-left > span { width: 100%; padding-left: 28px; font-size: 13px !important; }
+}
+
+/* Short phones in landscape: slimmer bars */
+@media (pointer: coarse) and (max-height: 520px) {
+  :root { --m-bar: 40px; --m-tabbar: 48px; --m-dock: 64px; }
+  .m-tab-icon { height: 26px; }
+  #generate-btn { height: 46px; }
+}
+
+/* Touch screens: no sticky hover looks after a tap (Tailwind's hover: utilities
+   are already limited to hover-capable devices, see tailwind.config.cjs) */
+@media (hover: none) {
+  .method-card:hover { transform: none; box-shadow: none; border-color: #2d3748; }
+  .wiz-record-btn:hover:not(:disabled) { transform: none; }
+  .saved-voice:not(.active):hover, .vl-tag:hover { border-color: #2d3748; }
+  .vl-tag:hover { color: #cbd5e1; }
+  .toggle-btn:not(.active):hover { color: #9ca3af; }
+  .library-item:hover { border-color: #2d3748; box-shadow: none; }
+  .voice-card:not(.selected):hover { border-color: #2d3748; }
+  .voice-card .vc-btn:hover { color: #9ca3af; border-color: #2d3748; }
+  .wiz-dropzone:not(.dragging):hover { border-color: #2d3748; background: #0f131a; color: #94a3b8; }
+}
+
+@media (prefers-reduced-motion: reduce) and (max-width: 768px), (prefers-reduced-motion: reduce) and (pointer: coarse) and (max-height: 520px) {
+  .app-view, .vl-overlay, .vl-dialog, #voice-wizard, .wizard-step.active { animation: none !important; }
+  .m-tab-icon { transition: none; }
+}

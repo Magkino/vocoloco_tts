@@ -80,9 +80,36 @@ export function quietestPoint(pcm, sr, from, to) {
 }
 
 /**
+ * A cut point in the longest pause in [from, to): runs of 50 ms frames within 6 dB
+ * of the stretch's noise floor (its 10th percentile, so hiss or room noise doesn't
+ * hide pauses), the longest one (the later on ties), cut up to 300 ms into it. A
+ * sentence ends in a longer pause than a breath inside it, and a reference cut
+ * mid-sentence makes every generation start by finishing that sentence (a short
+ * unintelligible sound and a pause). Without a pause of >= 100 ms: quietestPoint.
+ */
+export function longestPause(pcm, sr, from, to) {
+  const FRAME_MS = 50; // 10 ms frames: noise splits a pause into short runs
+  const frame = Math.max(1, Math.round(sr * FRAME_MS / 1000));
+  from = Math.max(0, Math.floor(from));
+  to = Math.min(pcm.length, Math.ceil(to));
+  const db = [];
+  for (let i = from; i + frame <= to; i += frame) db.push(frameDb(pcm, i, i + frame));
+  if (!db.length) return Math.round((from + to) / 2);
+  const thr = [...db].sort((a, b) => a - b)[Math.floor(db.length * 0.1)] + 6;
+  let best = null;
+  for (let i = 0, run = 0; i <= db.length; i++) {
+    if (i < db.length && db[i] < thr) { run++; continue; }
+    if (run && (!best || run >= best.len)) best = { at: i - run, len: run };
+    run = 0;
+  }
+  if (!best || best.len * FRAME_MS < 100) return quietestPoint(pcm, sr, from, to);
+  return from + (best.at + Math.min(best.len / 2, 300 / FRAME_MS)) * frame;
+}
+
+/**
  * Default voice-reference selection in a longer clip: skip leading silence,
- * keep the whole speech if it fits in `maxS`, otherwise end at the quietest
- * point in the last few seconds before `maxS` (like OmniVoice's
+ * keep the whole speech if it fits in `maxS`, otherwise end in the longest
+ * pause in the last few seconds before `maxS` (like OmniVoice's
  * trim_long_audio, which splits at a pause). Returns { start, end } in samples.
  */
 export function defaultSelection(pcm, sr, { minS = 3, maxS = 15 } = {}) {
@@ -92,7 +119,7 @@ export function defaultSelection(pcm, sr, { minS = 3, maxS = 15 } = {}) {
   const speechEnd = Math.min(pcm.length, b.end + Math.round(sr * 0.2));
   if (speechEnd - start <= max) return { start, end: speechEnd };
   const searchFrom = start + Math.max(Math.round(sr * minS), max - Math.round(sr * 4));
-  return { start, end: quietestPoint(pcm, sr, searchFrom, start + max) };
+  return { start, end: longestPause(pcm, sr, searchFrom, start + max) };
 }
 
 /**

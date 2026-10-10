@@ -1,24 +1,38 @@
 <!DOCTYPE html>
-<html lang="en" style="overflow-x:hidden;">
+<html lang="en" data-view="studio" style="overflow-x:hidden;"><!-- data-view: the visible view (mobile.js keeps it current), so the phone CSS is right before any script runs -->
 <head>
 <meta charset="utf-8"/>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
 <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
-<title>VocoLoco: Local Text-to-Speech in Your Browser</title>
-<meta name="description" content="Free, private text-to-speech that runs entirely in your browser. 600+ languages, voice cloning, WebGPU-accelerated. No server, no API keys.">
+<title>VocoLoco: Local Text-to-Speech &amp; Voice Cloning in Your Browser</title>
+<meta name="description" content="Free, private text-to-speech (TTS) and voice cloning that runs in your browser. 600+ languages, WebGPU-accelerated, no server, no API keys. Works on phones too.">
+<link rel="canonical" href="https://magkino.github.io/vocoloco_tts/">
+<meta name="robots" content="max-image-preview:large">
+<meta property="og:site_name" content="VocoLoco">
+<meta property="og:locale" content="en_US">
 <meta property="og:title" content="VocoLoco: Local Text-to-Speech">
-<meta property="og:description" content="Free, private text-to-speech that runs entirely in your browser. 600+ languages, voice cloning, WebGPU-accelerated.">
+<meta property="og:description" content="Free, private text-to-speech and voice cloning that runs in your browser. 600+ languages, no server, no API keys.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://magkino.github.io/vocoloco_tts/">
-<meta property="og:image" content="https://magkino.github.io/vocoloco_tts/og-image.png">
+<meta property="og:image" content="https://magkino.github.io/vocoloco_tts/og-image.jpg">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="VocoLoco: Local Text-to-Speech">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="VocoLoco: Local Text-to-Speech">
-<meta name="twitter:description" content="Free, private text-to-speech that runs entirely in your browser. 600+ languages, voice cloning, WebGPU-accelerated.">
-<meta name="twitter:image" content="https://magkino.github.io/vocoloco_tts/og-image.png">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
-<link rel="stylesheet" href="tailwind.css">
+<meta name="twitter:description" content="Free, private text-to-speech and voice cloning that runs in your browser. 600+ languages, no server, no API keys.">
+<meta name="twitter:image" content="https://magkino.github.io/vocoloco_tts/og-image.jpg">
+<meta name="twitter:image:alt" content="VocoLoco: Local Text-to-Speech">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<!-- Add to home screen: standalone app on iOS and Android -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0f131a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="VocoLoco">
+<link rel="stylesheet" href="tailwind.css?v=1">
 <style>
   body { font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
 </style>
@@ -233,6 +247,28 @@
   .vl-btn-confirm:hover { box-shadow: 0 0 16px rgba(74, 222, 128, 0.35); }
   .vl-btn-danger { background: rgba(239, 68, 68, 0.12); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
   .vl-btn-danger:hover { background: rgba(239, 68, 68, 0.2); }
+  .vl-sr-only { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  #legal-dialog {
+    width: min(560px, 92vw); max-height: 80vh; max-height: min(80dvh, 720px); padding: 0;
+    background: rgba(26, 32, 40, 0.98); color: #94a3b8; border: 1px solid #2d3748; border-radius: 18px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+  #legal-dialog[open] { display: flex; flex-direction: column; }
+  #legal-dialog::backdrop { background: rgba(15, 19, 26, 0.7); backdrop-filter: blur(4px); }
+  #legal-dialog .legal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 12px 14px 20px; border-bottom: 1px solid #2d3748; }
+  #legal-dialog h2 { color: #fff; font-size: 15px; font-weight: 700; }
+  #legal-dialog .legal-close { font-size: 24px; line-height: 1; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+  #legal-dialog .legal-close:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
+  #legal-dialog .legal-body:focus { outline: none; }
+  #legal-dialog .legal-body { overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px 20px; font-size: 13px; line-height: 1.6; }
+  #legal-dialog .legal-body p + p { margin-top: 12px; }
+  #legal-dialog strong { color: #e2e8f0; font-weight: 600; }
+  #legal-dialog a { text-decoration: underline; }
+  #legal-dialog a:hover { color: #fff; }
+  .vl-tag-bar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .vl-tag-scroll { display: contents; }
+  .vl-tag { font-size: 12px; padding: 3px 10px; border-radius: 8px; background: #1e293b; color: #cbd5e1; border: 1px solid #2d3748; cursor: pointer; transition: all 0.15s; }
+  .vl-tag:hover { color: #fff; border-color: #6b7280; }
   #toast-stack { position: fixed; top: 18px; right: 18px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
   .vl-toast {
     background: rgba(26, 32, 40, 0.95); backdrop-filter: blur(8px);
@@ -272,24 +308,6 @@
     padding: 2px 8px; border-radius: 9999px;
   }
 
-  .script-card {
-    display: flex; flex-direction: column; gap: 4px; padding: 12px 14px;
-    border-radius: 12px; background: #0f131a; border: 1px solid #2d3748;
-    cursor: pointer; transition: all 0.15s;
-  }
-  .script-card:hover { border-color: #6b7280; }
-  .script-card.selected { background: #273c38; border-color: #4ade80; box-shadow: 0 0 10px rgba(74, 222, 128, 0.2); }
-  .script-card .sc-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #e5e7eb; }
-  .script-card.selected .sc-head { color: #4ade80; }
-  .script-card .sc-lang {
-    font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 6px;
-    background: #1e293b; color: #94a3b8; border: 1px solid #2d3748;
-  }
-  .script-card .sc-preview {
-    font-size: 11px; color: #64748b; line-height: 1.4; overflow: hidden;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  }
-
   .mic-select {
     background: #0f131a; border: 1px solid #2d3748; border-radius: 10px;
     color: #d1d5db; font-size: 13px; padding: 8px 10px; outline: none;
@@ -301,12 +319,6 @@
     flex-shrink: 0;
   }
   .live-dot.off { background: #64748b; box-shadow: none; animation: none; }
-
-  .script-display {
-    background: #0f131a; border: 1px solid rgba(74, 222, 128, 0.25); border-radius: 16px;
-    padding: 18px 20px; font-size: 17px; line-height: 1.65; color: #f1f5f9;
-    box-shadow: inset 0 0 24px rgba(74, 222, 128, 0.04);
-  }
 
   .live-wave-wrap { background: linear-gradient(180deg, #0f131a, #080b10); border: 1px solid #2d3748; border-radius: 14px; overflow: hidden; }
   .level-bar { height: 4px; background: #1e293b; }
@@ -344,6 +356,25 @@
     border-color: rgba(239, 68, 68, 0.7); background: rgba(239, 68, 68, 0.12); color: #f87171;
     box-shadow: 0 0 20px rgba(239, 68, 68, 0.35); animation: rec-border-pulse 1.8s ease-in-out infinite;
   }
+  /* Recording, but shorter than the minimum: stop isn't available yet */
+  .wiz-record-btn[aria-disabled="true"] { cursor: default; transform: none; }
+  .wiz-record-btn[aria-disabled="true"] > span { opacity: 0.35; }
+  /* Changing numbers and labels keep their size, so nothing reflows while
+     recording, trimming or downloading */
+  #wiz-rec-elapsed { font-variant-numeric: tabular-nums; min-width: 8ch; }
+  .wiz-rec-status { min-height: 1rem; } /* one line reserved for the silence / too-short note */
+  #wiz-review-duration { font-variant-numeric: tabular-nums; min-width: 5ch; text-align: right; }
+  #wiz-trim-info, #wiz-saving-pct { font-variant-numeric: tabular-nums; }
+  #wiz-saving-pct { min-height: 1rem; }
+  /* As wide as the widest verdict: a new verdict doesn't push the duration */
+  #wiz-review-verdict { display: inline-grid; justify-items: center; }
+  #wiz-review-verdict::before, #wiz-review-verdict::after { visibility: hidden; height: 0; overflow: hidden; }
+  #wiz-review-verdict::before { content: 'Long \0000B7 slower'; }
+  #wiz-review-verdict::after { content: 'Good length'; }
+  /* Text that changes in place keeps the width of its widest state: the hidden
+     reserve (all the states, one per line) shares the column but has no height */
+  .label-stack { display: inline-grid; }
+  .label-reserve { visibility: hidden; height: 0; overflow: hidden; white-space: pre-line; }
 
   .wiz-dropzone {
     display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
@@ -354,13 +385,40 @@
   .wiz-dropzone.loading { cursor: progress; opacity: 0.6; pointer-events: none; }
   .asr-btn {
     display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
-    border: 1px solid #2d3748; background: #0f131a; color: #94a3b8; font-size: 11px; font-weight: 600;
-    cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    border: 1px solid #2d3748; color: #94a3b8; font-size: 11px; font-weight: 600; position: relative;
+    background: linear-gradient(90deg, rgba(74, 222, 128, 0.16) var(--asr-pct, 0%), #0f131a var(--asr-pct, 0%));
+    cursor: pointer; transition: all 0.15s; white-space: nowrap; font-variant-numeric: tabular-nums;
   }
   .asr-btn:hover:not(:disabled) { border-color: rgba(74, 222, 128, 0.6); color: #d1d5db; }
   .asr-btn:disabled { cursor: default; opacity: 0.6; }
   .asr-btn.busy { cursor: progress; opacity: 1; color: #4ade80; border-color: rgba(74, 222, 128, 0.4); }
   .asr-btn svg { width: 14px; height: 14px; flex: none; }
+  .asr-btn .label-stack { justify-items: center; }
+  /* What runs, seen from every tab (app.js renderActivity), filled as far as it got */
+  .activity {
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; padding: 4px 12px; border-radius: 999px;
+    max-width: 100%; font-size: 12px; font-weight: 600; color: #4ade80; white-space: nowrap; font-variant-numeric: tabular-nums;
+    border: 1px solid rgba(74, 222, 128, 0.35);
+    background: linear-gradient(90deg, rgba(74, 222, 128, 0.2) var(--pct, 0%), rgba(15, 19, 26, 0.9) var(--pct, 0%));
+  }
+  .activity.hidden { display: none; }
+  /* A download's progress in a dialog (app.js cloningProgressDialog) */
+  .vl-progress { height: 6px; margin: 14px 0 6px; border-radius: 999px; background: #1e293b; overflow: hidden; }
+  .vl-progress > div { height: 100%; width: 0; background: #4ade80; transition: width 0.3s; }
+  .vl-progress-stats { font-size: 12px; color: #94a3b8; font-variant-numeric: tabular-nums; }
+  #activity-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .vl-spin, .btn-busy::before {
+    width: 9px; height: 9px; flex: none; border-radius: 50%;
+    border: 2px solid currentColor; border-right-color: transparent; animation: vl-spin 0.8s linear infinite;
+  }
+  @keyframes vl-spin { to { transform: rotate(360deg); } }
+  /* A button whose job runs (a voice's Test): spinner, and filled like the activity pill */
+  .btn-busy {
+    cursor: progress !important; opacity: 1 !important; font-variant-numeric: tabular-nums;
+    background-image: linear-gradient(90deg, rgba(74, 222, 128, 0.28) var(--pct, 0%), transparent var(--pct, 0%)) !important;
+  }
+  .btn-busy::before { content: ''; display: inline-block; margin-right: 6px; vertical-align: -1px; }
+  @media (prefers-reduced-motion: reduce) { .vl-spin, .btn-busy::before { animation-duration: 2.4s; } }
   .speed-range { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 999px; background: #1e293b; outline: none; cursor: pointer; }
   .speed-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #4ade80; border: 2px solid #0f131a; box-shadow: 0 0 10px rgba(74, 222, 128, 0.5); }
   .speed-range::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #4ade80; border: 2px solid #0f131a; box-shadow: 0 0 10px rgba(74, 222, 128, 0.5); }
@@ -423,17 +481,49 @@
     color: #e5e7eb; font-size: 14px; font-weight: 600; padding: 2px 8px; outline: none; flex: 1; min-width: 0;
   }
 </style>
+<!-- Phone layout (native app shell); desktop is untouched, see the file header -->
+<link rel="stylesheet" href="mobile.css?v=2">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "VocoLoco",
+  "url": "https://magkino.github.io/vocoloco_tts/",
+  "description": "Free, private text-to-speech and voice cloning that runs entirely in your browser on WebGPU. 600+ languages, automatic transcription with Whisper, no server and no API keys.",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Any (browser with WebGPU)",
+  "browserRequirements": "Requires WebGPU. Desktop: Chrome, Edge or Safari 26 (other desktop browsers fall back to a much slower CPU mode). Phones and tablets: WebGPU with 16-bit floats, i.e. iOS or iPadOS 26 (any browser), or Chrome 121 or newer on Android. One-time model download of about 1.2 GB.",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "license": "https://www.apache.org/licenses/LICENSE-2.0",
+  "featureList": [
+    "600+ languages",
+    "Voice cloning from a short recording",
+    "On-device transcription (Whisper)",
+    "MP3 export with AI-provenance metadata",
+    "Works on desktop and phones",
+    "No server, no API keys, no uploads"
+  ],
+  "image": "https://magkino.github.io/vocoloco_tts/og-image.jpg",
+  "sameAs": [
+    "https://github.com/Magkino/vocoloco_tts",
+    "https://huggingface.co/Gigsu/vocoloco-onnx"
+  ]
+}
+</script>
 </head>
 <body class="bg-omni-bg text-gray-200 min-h-screen flex flex-col items-center py-8 md:py-12 px-4 bg-circuit-pattern relative overflow-x-hidden">
 
 <!-- Background Glow (max-width clamped to viewport) -->
-<div class="absolute top-[20%] left-1/2 -translate-x-1/2 w-[600px] max-w-[100vw] h-[600px] bg-omni-neon/10 rounded-full blur-[120px] pointer-events-none -z-10"></div>
+<div class="bg-glow absolute top-[20%] left-1/2 -translate-x-1/2 w-[600px] max-w-[100vw] h-[600px] bg-omni-neon/10 rounded-full blur-[120px] pointer-events-none -z-10"></div>
 
 <!-- Header -->
 <header class="text-center mb-8 z-10">
   <h1 class="text-3xl md:text-4xl font-bold text-omni-neon mb-1 tracking-wide">VocoLoco</h1>
   <h2 class="text-4xl md:text-5xl font-extrabold text-white mb-2">Personal Studio</h2>
-  <p class="text-omni-text-muted text-sm tracking-wider">local text to speech</p>
+  <p class="text-omni-text-muted text-sm tracking-wider">free, private text to speech in your browser</p>
+  <div id="activity" class="activity hidden" aria-hidden="true"><span class="vl-spin"></span><span id="activity-text"></span></div><!-- #status speaks for it -->
+
 </header>
 
 <!-- Main Container -->
@@ -472,10 +562,10 @@
 
       <!-- Mobile tab bar -->
       <div class="mobile-tabs">
-        <div class="mobile-tab active-tab" data-view="studio">Studio</div>
-        <div class="mobile-tab" data-view="voices">Voices</div>
-        <div class="mobile-tab" data-view="library">Library</div>
-        <div class="mobile-tab" data-view="settings">Settings</div>
+        <div class="mobile-tab active-tab" data-view="studio"><span class="m-tab-icon hidden" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg></span>Studio</div>
+        <div class="mobile-tab" data-view="voices"><span class="m-tab-icon hidden" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>Voices</div>
+        <div class="mobile-tab" data-view="library"><span class="m-tab-icon hidden" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg></span>Library</div>
+        <div class="mobile-tab" data-view="settings"><span class="m-tab-icon hidden" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg></span>Settings</div>
       </div>
 
       <!-- Studio View -->
@@ -485,15 +575,15 @@
       <div class="progress-bar hidden" id="progress-bar" style="width:0%" aria-hidden="true"></div>
 
       <!-- Status -->
-      <div class="flex items-center justify-center gap-2 min-h-[20px]">
-        <div id="status" role="status" aria-live="polite" class="text-center text-omni-text-muted text-sm font-medium">Loading models...</div>
+      <div class="m-status flex items-center justify-center gap-2 min-h-[20px]">
+        <div id="status" role="status" aria-live="polite" class="text-center text-omni-text-muted text-sm font-medium vl-sr-only">Loading models...</div><!-- vl-sr-only: the loading box shows it (app.js enableUI) -->
         <span id="backend-badge" class="hidden text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border"></span>
       </div>
 
       <!-- Text Input -->
-      <div class="relative group">
-        <div class="absolute -inset-0.5 bg-gradient-to-r from-omni-neon to-blue-500 rounded-2xl blur opacity-20 group-hover:opacity-30 transition duration-500"></div>
-        <div class="relative bg-omni-bg rounded-2xl p-5 neon-border flex flex-col" style="min-height: 180px;">
+      <div class="m-text relative group">
+        <div class="text-glow absolute -inset-0.5 bg-gradient-to-r from-omni-neon to-blue-500 rounded-2xl blur opacity-20 group-hover:opacity-30 transition duration-500"></div>
+        <div class="text-card relative bg-omni-bg rounded-2xl p-5 neon-border flex flex-col" style="min-height: 180px;">
           <!-- Loading overlay (shown until models are ready) -->
           <div id="loading-overlay" class="absolute inset-0 rounded-2xl flex flex-col items-center justify-center gap-3 z-10 p-4" style="background: rgba(15,19,26,0.85); backdrop-filter: blur(4px);">
             <div class="loading-spinner" id="loading-spinner"></div>
@@ -501,16 +591,31 @@
             <div id="loading-sub" class="text-omni-text-muted text-xs leading-relaxed text-center" style="max-width:340px;"></div>
             <div id="loading-track" class="hidden"><div id="loading-fill"></div></div>
             <div id="loading-stats" class="text-omni-text-muted text-xs font-mono text-center"></div>
+            <!-- Download consent: nothing downloads before the user agrees -->
+            <div id="loading-actions" class="hidden flex flex-wrap items-center justify-center gap-2 mt-1">
+              <button id="download-start" type="button" class="vl-btn vl-btn-confirm">Download</button>
+              <button id="download-speech-only" type="button" class="vl-btn vl-btn-cancel hidden">Speech only</button>
+              <button id="download-later" type="button" class="vl-btn vl-btn-cancel">Not now</button>
+              <button id="load-retry" type="button" class="vl-btn vl-btn-confirm hidden"></button>
+            </div>
           </div>
           <textarea id="text-input" maxlength="2000" aria-label="Text to speak" title="Enter to generate &middot; Shift+Enter for a new line" class="w-full flex-1 bg-transparent border-none text-gray-300 focus:ring-0 resize-none text-base leading-relaxed placeholder-omni-text-muted/50 outline-none" placeholder="Try: The quick brown fox jumps over the lazy dog." disabled></textarea>
+          <!-- Inserted at the cursor: [pause …] is split out by the app (text-chunker.js) -->
+          <div id="tag-bar" class="vl-tag-bar" role="toolbar" aria-label="Insert at the cursor">
+            <!-- display:contents on desktop; the swipeable chip row on phones (mobile.css) -->
+            <div class="vl-tag-scroll">
+            <button type="button" class="vl-tag" data-tag="[pause]" title="A pause of 0.8 s. Edit the tag for another length, e.g. [pause 1.5s]">Pause</button>
+            <button type="button" class="vl-tag" data-tag="[pause 2s]" title="A pause of 2 s">Pause 2 s</button>
+            </div>
+          </div>
           <div class="text-right text-omni-text-muted text-xs mt-2"><span id="char-count">0</span> / 2000</div>
         </div>
       </div>
 
       <!-- Voice Controls -->
-      <div class="flex flex-col gap-5">
+      <div class="m-controls flex flex-col gap-5">
         <!-- Gender -->
-        <div>
+        <div class="m-row">
           <label class="block text-omni-text-muted text-xs uppercase tracking-wider mb-2 font-semibold">Gender</label>
           <div class="flex rounded-xl bg-omni-bg border border-omni-border p-1 gap-1" id="gender-row">
             <div class="toggle-btn" data-val="male">Male</div>
@@ -519,7 +624,7 @@
         </div>
 
         <!-- Pitch -->
-        <div>
+        <div class="m-row">
           <label class="block text-omni-text-muted text-xs uppercase tracking-wider mb-2 font-semibold">Pitch</label>
           <div class="flex rounded-xl bg-omni-bg border border-omni-border p-1 gap-1" id="pitch-row">
             <div class="toggle-btn" data-val="low pitch">Low</div>
@@ -529,10 +634,9 @@
         </div>
 
         <!-- Quality -->
-        <div>
+        <div class="m-row">
           <label class="block text-omni-text-muted text-xs uppercase tracking-wider mb-2 font-semibold">Quality</label>
           <div class="flex rounded-xl bg-omni-bg border border-omni-border p-1 gap-1" id="quality-row">
-            <div class="toggle-btn" data-val="8">Fast</div>
             <div class="toggle-btn" data-val="16">Good</div>
             <div class="toggle-btn active" data-val="20">High</div>
             <div class="toggle-btn" data-val="32">Best</div>
@@ -551,10 +655,12 @@
         </div>
       </div>
 
-      <!-- Generate (transforms into Cancel during generation) -->
+      <!-- Generate (transforms into Cancel during generation); phones: fixed dock above the tab bar -->
+      <div class="gen-dock">
       <button id="generate-btn" disabled class="w-full py-4 rounded-xl border border-transparent bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-base tracking-wide transition-all hover:shadow-neon-strong hover:scale-[1.01] active:scale-[0.99] disabled:opacity-30 disabled:cursor-default disabled:hover:shadow-none disabled:hover:scale-100">
         Generate Speech
       </button>
+      </div>
 
       <!-- Player (always visible, empty state until first generation) -->
       <div id="studio-player">
@@ -578,7 +684,7 @@
       </div>
 
       <!-- Voice picker -->
-      <div class="pt-4 border-t border-omni-border/50">
+      <div class="m-picker pt-4 border-t border-omni-border/50">
         <div class="flex items-center justify-between mb-3">
           <label class="block text-omni-text-muted text-xs uppercase tracking-wider font-semibold">Voice</label>
           <a id="manage-voices-link" class="text-xs text-omni-text-muted hover:text-omni-neon transition-colors cursor-pointer" role="button" tabindex="0">Manage &rarr;</a>
@@ -588,7 +694,6 @@
 
       <!-- Hidden compat elements -->
       <select id="quality" style="display:none" aria-hidden="true">
-        <option value="8">Fast</option>
         <option value="16">Good</option>
         <option value="20" selected>High</option>
         <option value="32">Best</option>
@@ -617,7 +722,7 @@
 
         <!-- ===== Wizard ===== -->
         <div id="voice-wizard" class="flex-col gap-5" style="display:none">
-          <div class="flex items-center gap-3">
+          <div class="wiz-head flex items-center gap-3">
             <button id="wiz-back-btn" class="wiz-back" aria-label="Back">&larr;</button>
             <h3 class="text-lg font-bold text-white" id="wiz-title">New voice</h3>
             <button id="wiz-close-btn" class="wiz-close" aria-label="Close wizard">&times;</button>
@@ -626,32 +731,22 @@
           <!-- Step 1: method -->
           <div class="wizard-step" id="wiz-step-method">
             <p class="text-omni-text-muted text-sm">How do you want to add a voice?</p>
-            <div class="flex gap-3">
+            <div class="wiz-methods flex gap-3">
               <div class="method-card" id="wiz-method-record" role="button" tabindex="0">
                 <div class="method-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg></div>
-                <div class="text-sm font-semibold text-white">Record with a script</div>
-                <div class="text-xs text-omni-text-muted">Read a short text aloud &mdash; the transcript fills itself in. Takes about 30 seconds.</div>
+                <div class="text-sm font-semibold text-white">Record your voice</div>
+                <div class="text-xs text-omni-text-muted">Just talk for about 10 seconds.</div>
                 <span class="method-badge">Recommended</span>
               </div>
               <div class="method-card" id="wiz-method-upload" role="button" tabindex="0">
                 <div class="method-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg></div>
                 <div class="text-sm font-semibold text-white">Upload audio</div>
-                <div class="text-xs text-omni-text-muted">Use an existing clip of the voice. You type the transcript yourself.</div>
+                <div class="text-xs text-omni-text-muted">Use an existing clip of the voice.</div>
               </div>
             </div>
           </div>
 
-          <!-- Step 2 (record path): script picker -->
-          <div class="wizard-step" id="wiz-step-script">
-            <p class="text-omni-text-muted text-sm">Pick a script to read. It becomes the transcript automatically.</p>
-            <div class="flex flex-col gap-2" id="wiz-script-list"></div>
-            <div id="wiz-custom-wrap" class="hidden">
-              <textarea id="wiz-custom-text" maxlength="300" rows="3" class="w-full bg-omni-bg border border-omni-border rounded-xl px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40 resize-none" placeholder="Write 2-3 sentences you feel comfortable reading aloud (about 10 seconds)." aria-label="Your own script text"></textarea>
-            </div>
-            <button id="wiz-script-next" disabled class="w-full py-3 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-sm transition-all hover:shadow-neon-strong active:scale-[0.99] disabled:opacity-30 disabled:cursor-default">Continue to recording</button>
-          </div>
-
-          <!-- Step 3 (record path): mic check + record -->
+          <!-- Step 2 (record path): mic check + record -->
           <div class="wizard-step" id="wiz-step-record">
             <div class="flex items-center gap-3">
               <span class="live-dot off" id="wiz-mic-status" aria-hidden="true"></span>
@@ -664,7 +759,6 @@
                 <button id="wiz-mic-fallback-upload" class="py-2 px-4 rounded-lg bg-omni-btn-bg border border-omni-border text-gray-300 text-xs font-semibold transition-all hover:text-white active:scale-95">Upload audio instead</button>
               </div>
             </div>
-            <div class="script-display" id="wiz-script-display"></div>
             <div class="live-wave-wrap">
               <canvas id="wiz-live-wave" style="width:100%;height:72px;display:block;" aria-hidden="true"></canvas>
               <div class="level-bar"><div class="level-fill" id="wiz-level-fill"></div></div>
@@ -677,29 +771,29 @@
                 <div class="rec-timeline-mark" style="left:80%"></div>
               </div>
               <div class="flex items-center justify-between mt-2">
-                <span class="text-sm font-mono text-gray-300" id="wiz-rec-elapsed">0.0s</span>
-                <span class="text-xs text-omni-text-muted" id="wiz-rec-zone">Ready when you are &mdash; aim for 5-12 seconds</span>
+                <span class="text-sm font-mono text-gray-300" id="wiz-rec-elapsed">0.0 / 3s</span>
+                <span class="text-xs text-omni-text-muted" id="wiz-rec-zone">At least 3 s &middot; 5 to 12 s is best</span>
               </div>
             </div>
-            <div id="wiz-silence-hint" class="hidden text-xs text-amber-400/90 text-center" role="status" aria-live="polite"></div>
+            <div id="wiz-silence-hint" class="wiz-rec-status text-xs text-amber-400/90 text-center" role="status" aria-live="polite"></div>
             <div class="flex flex-col items-center gap-2">
-              <button id="wiz-record-btn" class="wiz-record-btn" disabled aria-label="Start or stop recording"><span id="wiz-record-btn-inner" class="flex items-center justify-center"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg></span></button>
-              <span class="text-xs text-omni-text-muted" id="wiz-record-label">Tap to record &mdash; starts after a 3-2-1 countdown</span>
+              <button id="wiz-record-btn" class="wiz-record-btn" disabled aria-label="Start or stop recording" aria-describedby="wiz-record-label wiz-silence-hint"><span id="wiz-record-btn-inner" class="flex items-center justify-center"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg></span></button>
+              <span class="text-xs text-omni-text-muted" id="wiz-record-label">Tap to record, starts after a 3-2-1 countdown</span>
             </div>
           </div>
 
           <!-- Step 2' (upload path) -->
           <div class="wizard-step" id="wiz-step-upload">
-            <div class="wiz-dropzone" id="wiz-dropzone" role="button" tabindex="0" aria-label="Drop an audio file here or click to browse">
+            <div class="wiz-dropzone" id="wiz-dropzone" role="button" tabindex="0" aria-label="Drop an audio file here or click to browse" aria-describedby="wiz-upload-hint wiz-upload-error">
               <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-              <div class="text-sm font-semibold text-white">Drop an audio file here</div>
-              <div class="text-xs text-omni-text-muted">or click to browse &mdash; MP3, WAV, M4A, OGG or a video &middot; long recordings are fine, you pick the part to clone next</div>
+              <div class="text-sm font-semibold text-white"><span class="m-fine">Drop an audio file here</span><span class="m-coarse">Choose an audio file</span></div>
+              <div class="text-xs text-omni-text-muted" id="wiz-upload-hint"><span class="m-fine">or click to browse &middot; </span>MP3, WAV, M4A, OGG or a video &middot; 3 s or longer, you pick the part to clone next</div>
               <input type="file" id="wiz-file-input" accept="audio/*,video/*" class="hidden"/>
             </div>
-            <div id="wiz-upload-error" class="hidden text-xs text-amber-400/90 text-center" role="status"></div>
+            <div id="wiz-upload-error" class="text-xs text-amber-400/90 text-center" role="status" aria-live="polite"></div>
           </div>
 
-          <!-- Step 4: review -->
+          <!-- Step 3: review (recordings and uploads) -->
           <div class="wizard-step" id="wiz-step-review">
             <div class="review-wave-wrap">
               <div id="wiz-trim-overview-wrap" class="trim-overview-wrap hidden" title="Click or drag to move the selection">
@@ -722,7 +816,7 @@
                 <label for="wiz-transcript" class="block text-omni-text-muted text-xs uppercase tracking-wider font-semibold">Transcript</label>
                 <button type="button" id="wiz-asr-btn" class="asr-btn">
                   <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z"/><path d="M19 11a7 7 0 01-14 0M12 18v3"/></svg>
-                  <span id="wiz-asr-label">Transcribe automatically</span>
+                  <span class="label-stack"><span id="wiz-asr-label">Transcribe</span><span class="label-reserve" id="wiz-asr-reserve" aria-hidden="true"></span></span>
                 </button>
               </div>
               <textarea id="wiz-transcript" rows="3" maxlength="500" class="w-full bg-omni-bg border border-omni-border rounded-xl px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40 resize-none" placeholder="Type the exact words spoken in the audio"></textarea>
@@ -732,22 +826,23 @@
               <label for="wiz-voice-name" class="block text-omni-text-muted text-xs uppercase tracking-wider mb-2 font-semibold">Voice name</label>
               <input type="text" id="wiz-voice-name" maxlength="40" class="w-full bg-omni-bg border border-omni-border rounded-xl px-3 py-2.5 text-sm text-gray-300 outline-none focus:border-omni-neon/50 placeholder-omni-text-muted/40" placeholder="e.g. My narrator voice"/>
             </div>
-            <div class="flex gap-2">
+            <div class="wiz-actions flex gap-2">
               <button id="wiz-review-back" class="flex-1 py-3 rounded-xl bg-omni-btn-bg border border-omni-border text-gray-300 hover:text-white text-sm font-medium transition-all active:scale-[0.98]">&larr; Re-record</button>
-              <button id="wiz-save-btn" class="flex-1 py-3 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-sm transition-all hover:shadow-neon-strong active:scale-[0.99] disabled:opacity-30 disabled:cursor-default">Save voice</button>
+              <button id="wiz-save-btn" class="flex-1 py-3 rounded-xl bg-gradient-to-r from-omni-neon to-green-400 text-omni-bg font-bold text-sm transition-all hover:shadow-neon-strong active:scale-[0.99] disabled:opacity-30 disabled:cursor-default" aria-describedby="wiz-save-blocker">Save voice</button>
             </div>
             <div id="wiz-save-blocker" class="hidden text-xs text-amber-400/90 text-center" role="status"></div>
           </div>
 
-          <!-- Step 5: saving -->
+          <!-- Step 4: saving -->
           <div class="wizard-step" id="wiz-step-saving">
             <div class="flex flex-col items-center gap-4 py-10">
               <div class="loading-spinner"></div>
               <span class="text-sm text-omni-text-muted" id="wiz-saving-status" role="status" aria-live="polite">Analyzing voice&hellip; (one-time setup)</span>
+              <span class="text-xs text-omni-text-muted" id="wiz-saving-pct" style="visibility:hidden" aria-hidden="true"></span>
             </div>
           </div>
 
-          <!-- Step 6: done -->
+          <!-- Step 5: done -->
           <div class="wizard-step" id="wiz-step-done">
             <div class="flex flex-col items-center gap-4 py-6 text-center">
               <div class="done-check">&#10003;</div>
@@ -838,7 +933,7 @@
 
         <!-- Info -->
         <div class="text-omni-text-muted/60 text-xs leading-relaxed bg-omni-bg rounded-xl p-4 border border-omni-border/50">
-          All data is stored locally in your browser using IndexedDB. Nothing is sent to any server. Clearing cached models means ~3 GB will need to be re-downloaded on next use.
+          All data stays in your browser. Nothing is sent to any server. Cleared models are downloaded again the next time they are needed.
         </div>
       </div><!-- end view-settings -->
 
@@ -848,6 +943,13 @@
 
 <!-- Footer -->
 <footer class="w-full max-w-4xl mt-10 mb-6 z-10 flex flex-col items-center gap-6 overflow-hidden">
+
+  <!-- About: plain-text summary (the early browser check moves it into the "can't run" notice) -->
+  <section id="about" aria-labelledby="about-title" class="max-w-lg px-4 text-center text-xs leading-relaxed text-omni-text-muted/80">
+    <h2 id="about-title" class="font-semibold text-gray-400 mb-2">About VocoLoco</h2>
+    <p>VocoLoco is a free text-to-speech (TTS) studio that runs entirely in your browser. Type or paste your text (up to 2000 characters), pick or clone a voice, then listen or download an MP3. Speech is generated on your own device with the <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-white">OmniVoice</a> model on WebGPU, so your text and recordings are never uploaded. It speaks 600+ languages, clones a voice from a short recording (transcribed automatically on your device), and runs on desktop (Chrome, Edge or Safari 26; other browsers fall back to a much slower CPU mode) and on phones and tablets (iOS or iPadOS 26 in any browser, Chrome 121 or newer on Android).</p>
+    <p class="mt-2">The first visit downloads the model (about 1.2 GB; cloning a voice adds about 0.6 GB and automatic transcription about 0.9 GB) from <a href="https://huggingface.co/Gigsu/vocoloco-onnx" target="_blank" rel="noopener" class="underline hover:text-white">Hugging Face</a>. Once it is stored on your device, no network requests are made while speech is generated. The app is open source on <a href="https://github.com/Magkino/vocoloco_tts" target="_blank" rel="noopener" class="underline hover:text-white">GitHub</a> (Apache-2.0); the models are for non-commercial use (licences under Disclaimer &amp; privacy).</p>
+  </section>
 
   <!-- GitHub + Donate buttons -->
   <div class="flex flex-wrap items-center justify-center gap-3">
@@ -919,6 +1021,24 @@
       <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
         <div>
           <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.5.0</span>
+            <span class="text-[10px] text-omni-text-muted/40">Oct 11, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>Our own WebGPU engine runs the model, its decoder, the voice encoder and Whisper: faster, half the download (1.2 GB instead of 2.4 GB), and it runs on phones. The previous model files are removed from your device</li>
+            <li>Phone layout that feels like an app: tabs, sheets, a toolbar above the keyboard; add VocoLoco to your home screen for a full-screen app</li>
+            <li>One download, chosen up front: speech only, or speech and voice cloning together. Voice cloning can be added later in one step</li>
+            <li>Works offline once the models are downloaded</li>
+            <li>Shows what it is doing and how far, on every tab and on the Test button</li>
+            <li>Before the first download VocoLoco checks that the device has enough memory, and tells you instead of crashing; on phones one model is in memory at a time</li>
+            <li>Pause buttons: [pause] and [pause 2s], or type [pause 1.5] for an exact silence</li>
+            <li>Fixed cloned voices sometimes switching to a different speaker partway through</li>
+            <li>Long texts play in one go: every part is generated first, so there are no waits between parts</li>
+            <li>Recording a voice: just talk, no script to read</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
+          <div class="flex items-center gap-2 mb-1">
             <span class="text-[11px] font-bold text-omni-neon">v1.4.1</span>
             <span class="text-[10px] text-omni-text-muted/40">Oct 9, 2026</span>
           </div>
@@ -973,7 +1093,7 @@
           <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
             <li>Streamed generation: long texts (up to 2000 characters) start playing within seconds</li>
             <li>New Voices tab: guided recording wizard with live level meter and auto-filled transcripts</li>
-            <li>Voices are analyzed once and cached &mdash; cloned generation starts much faster</li>
+            <li>Voices are analyzed once and cached, so cloned generation starts much faster</li>
             <li>Click-to-seek player with playhead and elapsed time</li>
             <li>Accurate download progress with size and time remaining, first-run setup screen</li>
             <li>Graceful cancel keeps the audio already generated</li>
@@ -1042,30 +1162,40 @@
     </div>
   </div>
 
-  <!-- Disclaimer & Legal -->
-  <div class="text-center text-omni-text-muted/60 text-[10px] leading-relaxed max-w-lg px-4">
-    <p class="mb-1"><strong class="text-omni-text-muted/80">Disclaimer &amp; Legal Notice</strong></p>
-    <p class="mb-2"><strong class="text-omni-text-muted/80">How it works.</strong> All speech synthesis and transcription runs locally in your browser. No audio, text, or voice data is uploaded to any server. However, on first use (and after cache clears), the app downloads AI model weights (~2.5&nbsp;GB, plus ~0.65&nbsp;GB when you first clone a voice and ~0.5&nbsp;GB if you use automatic transcription) from <strong class="text-omni-text-muted/80">Hugging&nbsp;Face</strong> (huggingface.co) and runtime libraries from <strong class="text-omni-text-muted/80">jsDelivr</strong> (cdn.jsdelivr.net). These downloads expose your IP address, browser user-agent, and referrer to those services under their respective privacy policies. Once cached, no further network requests are made during synthesis.</p>
-    <p class="mb-2"><strong class="text-omni-text-muted/80">AI-generated content.</strong> All audio produced by this tool is synthetic speech generated by an AI model (<a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">OmniVoice</a>). Downloaded MP3 files contain machine-readable metadata (ID3v2) identifying them as AI-generated in accordance with EU&nbsp;AI&nbsp;Act Art.&nbsp;50. Do not remove or alter this metadata.</p>
-    <p class="mb-2"><strong class="text-omni-text-muted/80">User obligations under the EU&nbsp;AI&nbsp;Act.</strong> If you publish or distribute audio generated by this tool, you are legally required to disclose its synthetic nature to your audience (Art.&nbsp;50(4)), including audible disclaimers where applicable. Using this tool to impersonate real individuals without their explicit consent, to create deceptive deepfakes, or to strip or circumvent AI content-marking is prohibited and may constitute a violation of the EU&nbsp;AI&nbsp;Act and other applicable law.</p>
-    <p class="mb-2"><strong class="text-omni-text-muted/80">No warranty.</strong> This tool is provided as-is, without warranty of any kind, for personal, creative, and research purposes. The developers accept no liability for the content users generate, for any downstream use or misuse, or for the availability, accuracy, or conduct of third-party services (Hugging&nbsp;Face, jsDelivr, GitHub).</p>
-    <p><strong class="text-omni-text-muted/80">Third-party services:</strong> <a href="https://huggingface.co/privacy" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">Hugging&nbsp;Face Privacy&nbsp;Policy</a> &middot; <a href="https://www.jsdelivr.com/terms/privacy-policy-jsdelivr-net" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">jsDelivr Privacy&nbsp;Policy</a> &middot; <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/80">GitHub Privacy&nbsp;Statement</a></p>
+  <div class="text-omni-text-muted/40 text-[10px] text-center leading-relaxed px-4">
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Runs locally in your browser &middot; <button id="legal-btn" type="button" class="underline hover:text-omni-text-muted/60 cursor-pointer">Disclaimer &amp; privacy</button> &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.5.0</button>
   </div>
-
-  <div class="text-omni-text-muted/40 text-[10px]">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Synthesis runs locally in your browser &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.4.1</button>
-  </div>
-
 
 </footer>
+
+<!-- Disclaimer & legal notice, opened from the footer (outside it: phones hide the footer outside Settings) -->
+<dialog id="legal-dialog" aria-labelledby="legal-title">
+  <div class="legal-head">
+    <h2 id="legal-title">Disclaimer &amp; Legal Notice</h2>
+    <form method="dialog"><button class="legal-close" aria-label="Close">&times;</button></form>
+  </div>
+  <div class="legal-body" tabindex="-1" autofocus><!-- focus lands here on open, not on the close button -->
+    <p><strong>How it works.</strong> All speech synthesis and transcription runs locally in your browser. No audio, text, or voice data is uploaded to any server. However, on first use (and after cache clears), the app downloads AI model weights (~1.2&nbsp;GB, plus ~0.6&nbsp;GB when you first clone a voice and ~0.9&nbsp;GB if you use automatic transcription) from <strong>Hugging&nbsp;Face</strong> (huggingface.co); browsers without WebGPU also load a runtime library from <strong>jsDelivr</strong> (cdn.jsdelivr.net). These downloads expose your IP address, browser user-agent, and referrer to those services under their respective privacy policies. Once cached, no further network requests are made during synthesis.</p>
+    <p><strong>AI-generated content.</strong> All audio produced by this tool is synthetic speech generated by an AI model (<a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener">OmniVoice</a>). Downloaded MP3 files contain machine-readable metadata (ID3v2) identifying them as AI-generated in accordance with EU&nbsp;AI&nbsp;Act Art.&nbsp;50. Do not remove or alter this metadata.</p>
+    <p><strong>User obligations under the EU&nbsp;AI&nbsp;Act.</strong> If you publish or distribute audio generated by this tool, you are legally required to disclose its synthetic nature to your audience (Art.&nbsp;50(4)), including audible disclaimers where applicable. Using this tool to impersonate real individuals without their explicit consent, to create deceptive deepfakes, or to strip or circumvent AI content-marking is prohibited and may constitute a violation of the EU&nbsp;AI&nbsp;Act and other applicable law.</p>
+    <p><strong>No warranty.</strong> This tool is provided as-is, without warranty of any kind, for personal, creative, and research purposes. The developers accept no liability for the content users generate, for any downstream use or misuse, or for the availability, accuracy, or conduct of third-party services (Hugging&nbsp;Face, jsDelivr, GitHub).</p>
+    <p><strong>Licences.</strong> The app is open source under Apache-2.0. The OmniVoice model by Xiaomi Corp. is licensed CC&nbsp;BY-NC (non-commercial). The voice encoder and audio decoder are Boson AI's Higgs Audio v2 tokenizer, under the <a href="https://huggingface.co/k2-fsa/OmniVoice/blob/main/audio_tokenizer/LICENSE" target="_blank" rel="noopener">Boson Higgs Audio 2 Community License</a>; their use must follow the <a href="https://www.llama.com/llama3/use-policy" target="_blank" rel="noopener">Llama&nbsp;3 Acceptable Use Policy</a>. Built with Higgs Materials licensed from Boson AI USA, Inc., Copyright Boson AI USA, Inc., All Rights Reserved and Meta Llama&nbsp;3 licensed under the Meta Llama&nbsp;3 Community License, Copyright Meta Platforms, Inc., All Rights Reserved. Transcription: Whisper by OpenAI (MIT). MP3 export: <a href="https://github.com/zhuker/lamejs" target="_blank" rel="noopener">lamejs</a> (LGPL-3.0). All licences: <a href="https://github.com/Magkino/vocoloco_tts#license" target="_blank" rel="noopener">README</a>.</p>
+    <p><strong>Third-party services:</strong> <a href="https://huggingface.co/privacy" target="_blank" rel="noopener">Hugging&nbsp;Face Privacy&nbsp;Policy</a> &middot; <a href="https://www.jsdelivr.com/terms/privacy-policy-jsdelivr-net" target="_blank" rel="noopener">jsDelivr Privacy&nbsp;Policy</a> &middot; <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener">GitHub Privacy&nbsp;Statement</a></p>
+  </div>
+</dialog>
 
 <script>
   document.getElementById('donate-btn').addEventListener('click', () => {
     document.getElementById('donate-modal').classList.toggle('hidden');
   });
 
+  const legalDialog = document.getElementById('legal-dialog');
+  document.getElementById('legal-btn').addEventListener('click', () => legalDialog.showModal());
+  // A click on the dialog element itself is a click on the backdrop
+  legalDialog.addEventListener('click', (e) => { if (e.target === legalDialog) legalDialog.close(); });
+
   // Changelog toggle
-  const CURRENT_VERSION = 'v1.4.1';
+  const CURRENT_VERSION = 'v1.5.0';
   document.getElementById('version-btn').textContent = CURRENT_VERSION;
   const changelogPanel = document.getElementById('changelog-panel');
   function toggleChangelog(show) {
@@ -1086,14 +1216,19 @@
   const lastSeen = localStorage.getItem('vocoloco-version');
   if (lastSeen && lastSeen !== CURRENT_VERSION) {
     const toast = document.createElement('div');
+    toast.id = 'update-toast'; // phones: placed above the tab bar (mobile.css)
     toast.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:999;background:rgba(26,32,40,0.95);border:1px solid rgba(74,222,128,0.3);border-radius:12px;padding:12px 16px;backdrop-filter:blur(8px);cursor:pointer;transition:opacity 0.3s,transform 0.3s;transform:translateY(10px);opacity:0;';
     toast.innerHTML = `<div style="font-size:12px;font-weight:600;color:#4ade80;margin-bottom:2px;">Updated to ${CURRENT_VERSION}</div><div style="font-size:11px;color:#94a3b8;">Tap to see what changed</div>`;
     document.body.appendChild(toast);
     requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.transform = 'translateY(0)'; });
     toast.addEventListener('click', () => {
       toast.remove();
+      // Phones show the footer (with the changelog) in the Settings tab only
+      const settingsTab = document.querySelector('.mobile-tab[data-view="settings"]');
+      if (settingsTab && settingsTab.offsetParent !== null) settingsTab.click();
       toggleChangelog(true);
-      changelogPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      // next frame: the tab switch above shows the footer asynchronously
+      requestAnimationFrame(() => changelogPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
     });
     setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateY(10px)'; setTimeout(() => toast.remove(), 300); }, 8000);
   }
@@ -1102,44 +1237,28 @@
 </script>
 
 <script>
-// Early WebGPU + device check — before loading any heavy scripts
+// Early browser check, before loading any heavy scripts
 (async () => {
-  // Block mobile devices outright — even if they report WebGPU support,
-  // they cannot practically run a 2.5 GB model.
-  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
-
-  if (isMobile) {
-    document.querySelector('main').innerHTML = `
-      <div style="text-align:center;padding:60px 24px;">
-        <div style="font-size:48px;margin-bottom:16px;">\uD83D\uDDA5\uFE0F</div>
-        <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Desktop Browser Required</h2>
-        <p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:340px;margin:0 auto 20px;">
-          VocoLoco loads a 2.5 GB model that exceeds the memory limits mobile browsers impose on a single tab.
-        </p>
-        <p style="color:#94a3b8;font-size:13px;line-height:1.6;max-width:340px;margin:0 auto;">
-          Please use a desktop or laptop browser.
-        </p>
-      </div>`;
-    return; // don't load app.js at all
-  }
-
-  // Detect issues before loading heavy scripts
-  const isFirefox = /Firefox\//i.test(navigator.userAgent);
+  // Same test as LOW_MEMORY in app.js
+  const isPhone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || !!navigator.userAgentData?.mobile;
   const forceCPU = location.search.includes('cpu');
-  let hasGPU = false;
+  let adapter = null;
   if (!forceCPU && navigator.gpu) {
-    try { hasGPU = !!(await navigator.gpu.requestAdapter()); } catch {}
+    try { adapter = await navigator.gpu.requestAdapter(); } catch {}
   }
 
-  const warnings = [];
-  if (isFirefox) {
-    warnings.push('Firefox runs up to 2x slower than other browsers for this workload.');
-  }
-  if (!hasGPU) {
-    warnings.push('WebGPU is not available. Inference will run on the CPU via WebAssembly, which is significantly slower. This requires a browser that supports WebGPU <em>and</em> a dedicated GPU.');
+  // Phones only run the WebGPU engine (16-bit floats); desktops can fall back to the CPU
+  let notice = null;
+  if (isPhone && !adapter?.features.has('shader-f16')) {
+    notice = { title: "This browser can't run VocoLoco",
+      text: 'On phones and tablets VocoLoco needs WebGPU with 16-bit floats: iOS or iPadOS 26 (any browser), or Chrome 121 or newer on Android.' };
+  } else if (!adapter) {
+    notice = { title: 'No WebGPU in this browser',
+      text: 'VocoLoco can run on the CPU instead, but generating speech is much slower. For full speed, use a browser with WebGPU: Chrome, Edge or Safari 26.',
+      button: 'Continue on the CPU' };
   }
 
-  if (warnings.length > 0) {
+  if (notice) {
     const mainEl = document.querySelector('main');
     // Hide existing content instead of destroying it (preserves DOM references for app.js)
     for (const child of mainEl.children) child.style.display = 'none';
@@ -1147,15 +1266,16 @@
     warnDiv.style.cssText = 'text-align:center;padding:60px 24px;';
     warnDiv.innerHTML = `
         <div style="font-size:48px;margin-bottom:16px;">&#9888;&#65039;</div>
-        <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">Performance Warning</h2>
-        ${warnings.map(w => `<p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:380px;margin:0 auto 10px;">${w}</p>`).join('')}
-        <p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:380px;margin:0 auto 20px;">
-          For the best experience, use <strong style="color:white;">Chrome</strong> or <strong style="color:white;">Edge</strong>.
-        </p>
-        <button id="warn-continue-btn" style="margin-top:8px;padding:10px 28px;border-radius:10px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);color:#f59e0b;font-size:14px;font-weight:600;cursor:pointer;">
-          Continue anyway
-        </button>`;
+        <h2 style="font-size:22px;font-weight:700;color:white;margin-bottom:8px;">${notice.title}</h2>
+        <p style="color:#94a3b8;font-size:14px;line-height:1.6;max-width:380px;margin:0 auto 20px;">${notice.text}</p>
+        ${notice.button ? `<button id="warn-continue-btn" style="margin-top:8px;padding:10px 28px;border-radius:10px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);color:#f59e0b;font-size:14px;font-weight:600;cursor:pointer;">${notice.button}</button>` : ''}`;
     mainEl.appendChild(warnDiv);
+    if (!notice.button) { // not supported: nothing else loads
+      // Show the About text here: phones hide the footer outside the Settings tab (moved, not copied)
+      const about = document.getElementById('about');
+      if (about) { about.style.margin = '28px auto 0'; warnDiv.appendChild(about); }
+      return;
+    }
     await new Promise(resolve => {
       document.getElementById('warn-continue-btn').addEventListener('click', () => {
         warnDiv.remove();
@@ -1170,15 +1290,17 @@
   lame.onload = () => {
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = 'app.js?v=10';
+    s.src = 'app.js?v=13';
     document.body.appendChild(s);
   };
   lame.onerror = () => {
     const statusEl = document.getElementById('status');
-    if (statusEl) statusEl.textContent = 'Failed to load the MP3 encoder — check your connection and reload the page.';
+    if (statusEl) statusEl.textContent = 'Failed to load the MP3 encoder. Check your connection and reload the page.';
   };
   document.body.appendChild(lame);
 })();
 </script>
+<!-- Phone app shell behaviour (keyboard, sheets, tabs); see mobile.css -->
+<script type="module" src="mobile.js?v=2"></script>
 </body>
 </html>

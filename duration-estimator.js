@@ -1,5 +1,6 @@
 /**
- * RuleDurationEstimator — port of omnivoice/utils/duration.py
+ * RuleDurationEstimator: port of omnivoice/utils/duration.py (OmniVoice, Copyright 2026
+ * Xiaomi Corp., Apache License 2.0), translated to JavaScript.
  * Estimates audio token count from text using character phonetic weights.
  */
 
@@ -57,34 +58,13 @@ function bisectLeft(arr, val) {
   return lo;
 }
 
-// Unicode general category detection (simplified for common cases)
-function getCharCategory(code) {
-  // Combining marks (Mn, Mc, Me)
-  if ((code >= 0x0300 && code <= 0x036F) || // Combining Diacritical Marks
-      (code >= 0x0483 && code <= 0x0489) ||
-      (code >= 0x0591 && code <= 0x05BD) ||
-      (code >= 0x064B && code <= 0x065F) ||
-      (code >= 0x0900 && code <= 0x0903) ||
-      (code >= 0x093A && code <= 0x094F) ||
-      (code >= 0x0951 && code <= 0x0957) ||
-      (code >= 0x0962 && code <= 0x0963) ||
-      (code >= 0xFE20 && code <= 0xFE2F)) return 'M';
-  // Punctuation
-  if ((code >= 0x0021 && code <= 0x002F) ||
-      (code >= 0x003A && code <= 0x0040) ||
-      (code >= 0x005B && code <= 0x0060) ||
-      (code >= 0x007B && code <= 0x007E) ||
-      (code >= 0x2000 && code <= 0x206F) ||
-      (code >= 0x3000 && code <= 0x303F)) return 'P';
-  // Digits
-  if (code >= 0x0030 && code <= 0x0039) return 'N';
-  // Symbols
-  if ((code >= 0x00A0 && code <= 0x00BF) ||
-      (code >= 0x2100 && code <= 0x27FF)) return 'S';
-  // Space separators
-  if (code === 0x00A0 || code === 0x2000 || code === 0x2001 ||
-      code === 0x2002 || code === 0x2003 || code === 0x3000) return 'Z';
-  return 'L'; // Letter (default)
+// Unicode general categories like upstream's unicodedata.category (M*, P*/S*, Z*, N*):
+// the hand-written ranges this replaces weighed e.g. "€" as kana (2.2), "½" and
+// emoji as letters, no-break and thin spaces as punctuation, Indic vowel signs as letters
+const CATEGORY = [[/\p{M}/u, 'M'], [/[\p{P}\p{S}]/u, 'P'], [/\p{Z}/u, 'Z'], [/\p{N}/u, 'N']];
+function getCharCategory(char) {
+  for (const [re, cat] of CATEGORY) if (re.test(char)) return cat;
+  return 'L';
 }
 
 function getCharWeight(char) {
@@ -93,9 +73,9 @@ function getCharWeight(char) {
   if (code === 32) return WEIGHTS.space;
   if (code === 0x0640) return WEIGHTS.mark; // Arabic Tatweel
 
-  const cat = getCharCategory(code);
+  const cat = getCharCategory(char);
   if (cat === 'M') return WEIGHTS.mark;
-  if (cat === 'P' || cat === 'S') return WEIGHTS.punctuation;
+  if (cat === 'P') return WEIGHTS.punctuation;
   if (cat === 'Z') return WEIGHTS.space;
   if (cat === 'N') return WEIGHTS.digit;
 
@@ -138,5 +118,5 @@ export function estimateTargetTokens(text, refText = null, numRefAudioTokens = n
   }
   let est = estimateDuration(text, rText, rTokens);
   if (speed > 0 && speed !== 1.0) est = est / speed;
-  return Math.max(1, Math.round(est));
+  return Math.max(1, Math.floor(est)); // int() upstream
 }

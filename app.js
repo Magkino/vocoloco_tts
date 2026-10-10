@@ -1,39 +1,30 @@
 /**
  * VocoLoco — Main application
- * Streams generation sentence-by-sentence, manages voices (guided recording
- * wizard + cached voice tokens), the library, settings, and all studio UI.
+ * Streams generation sentence-by-sentence, manages voices (voice wizard +
+ * cached voice tokens), the library, settings, and all studio UI.
  */
 
-import { toast, confirmDialog, isDialogOpen } from './ui-dialogs.js';
+import { toast, confirmDialog, isDialogOpen } from './ui-dialogs.js?v=2';
 import { StreamingPlayer, drawBarVisualizer, drawMiniWaveform } from './player.js';
-import { chunkText } from './text-chunker.js?v=2';
-import { TrimEditor } from './trim-editor.js?v=2';
-import { prepareReference, defaultSelection, REF_PREP_VERSION } from './audio-postprocess.js?v=2';
+import { chunkText } from './text-chunker.js?v=3';
+import { TrimEditor } from './trim-editor.js?v=3';
+import { prepareReference, defaultSelection, REF_PREP_VERSION } from './audio-postprocess.js?v=3';
+import { diskUsage, clearDisk } from './workers/model-files.js?v=4';
+import { refInfoKey } from './workers/voice-pitch.js';
 
 const MODEL_BASE_URL = 'https://huggingface.co/Gigsu/vocoloco-onnx/resolve/main';
-// Local dev: a complete mirror in ./models (scripts/fetch-models.sh) replaces
-// Hugging Face, so reloads don't re-download ~3 GB. Never used in production.
+// Anywhere but the official site (local development, self-hosting): a complete mirror in ./models
+// (scripts/fetch-models.sh) replaces Hugging Face, so reloads don't re-download gigabytes
 const LOCAL_MODEL_URL = new URL('models', location.href).href;
+// Phones and tablets: their browsers kill a tab that holds much more than ~1.5 GB (iPhone), so
+// one big model is in memory at a time there (tts-worker.js, lowMemory; Whisper, requestTranscript)
+const LOW_MEMORY = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || !!navigator.userAgentData?.mobile;
 const MAX_TEXT_LEN = 2000;
 // OmniVoice's sampling defaults (num_step comes from the quality toggle)
 const GEN_PARAMS = { guidanceScale: 2.0, tShift: 0.1 };
 
-// ─── Guided recording scripts ───────────────────────────────────────────────
-// Reading one of these aloud makes the transcript exact by construction.
-
-const VOICE_SCRIPTS = [
-  { id: 'en-village', lang: 'en', label: 'Village morning',
-    text: 'The quick autumn breeze swept golden leaves across the quiet village square. Somewhere nearby a church bell rang twice, and the smell of fresh bread drifted over from the bakery.' },
-  { id: 'en-storm', lang: 'en', label: 'Thunderstorm',
-    text: 'Have you ever watched a thunderstorm roll in from the sea? First the air goes completely still, then a low rumble builds, and suddenly bright flashes dance across the horizon.' },
-  { id: 'en-coffee', lang: 'en', label: 'Morning routine',
-    text: 'I usually start my day with a strong cup of coffee and a short walk outside. It clears my head, wakes up my voice, and puts me in a surprisingly good mood.' },
-  { id: 'de-markt', lang: 'de', label: 'Auf dem Marktplatz',
-    text: 'Der alte Marktplatz liegt ruhig in der Morgensonne. Ein Duft von frischem Brot und Kaffee zieht durch die Gassen, während die ersten Händler ihre bunten Stände aufbauen.' },
-  { id: 'de-gewitter', lang: 'de', label: 'Sommergewitter',
-    text: 'Hast du schon einmal ein Sommergewitter beobachtet? Zuerst wird die Luft ganz still, dann grollt der Donner leise in der Ferne, und plötzlich zucken helle Blitze über den Himmel.' },
-];
-
+// "Test this voice", in the voice's language when known (detected by Whisper)
 const TEST_SENTENCES = {
   en: "Hey, this is my new cloned voice. I think it sounds pretty close, don't you?",
   de: 'Hallo, das ist meine neue geklonte Stimme. Klingt ziemlich echt, oder?',
@@ -68,6 +59,11 @@ const loadingSub = $('loading-sub');
 const loadingTrack = $('loading-track');
 const loadingFill = $('loading-fill');
 const loadingStats = $('loading-stats');
+const loadingActions = $('loading-actions');
+const downloadStartBtn = $('download-start');
+const downloadLaterBtn = $('download-later');
+const downloadSpeechOnlyBtn = $('download-speech-only');
+const loadRetryBtn = $('load-retry');
 const studioVoicePicker = $('studio-voice-picker');
 const manageVoicesLink = $('manage-voices-link');
 
@@ -84,17 +80,12 @@ const wizBackBtn = $('wiz-back-btn');
 const wizCloseBtn = $('wiz-close-btn');
 const wizMethodRecord = $('wiz-method-record');
 const wizMethodUpload = $('wiz-method-upload');
-const wizScriptList = $('wiz-script-list');
-const wizCustomWrap = $('wiz-custom-wrap');
-const wizCustomText = $('wiz-custom-text');
-const wizScriptNext = $('wiz-script-next');
 const wizMicStatus = $('wiz-mic-status');
 const wizMicSelect = $('wiz-mic-select');
 const wizMicError = $('wiz-mic-error');
 const wizMicErrorText = $('wiz-mic-error-text');
 const wizMicRetry = $('wiz-mic-retry');
 const wizMicFallbackUpload = $('wiz-mic-fallback-upload');
-const wizScriptDisplay = $('wiz-script-display');
 const wizLiveWave = $('wiz-live-wave');
 const wizLevelFill = $('wiz-level-fill');
 const wizRecFill = $('wiz-rec-fill');
@@ -117,19 +108,20 @@ const wizTranscript = $('wiz-transcript');
 const wizTranscriptHint = $('wiz-transcript-hint');
 const wizAsrBtn = $('wiz-asr-btn');
 const wizAsrLabel = $('wiz-asr-label');
+const wizAsrReserve = $('wiz-asr-reserve');
 const wizVoiceName = $('wiz-voice-name');
 const wizReviewBack = $('wiz-review-back');
 const wizSaveBtn = $('wiz-save-btn');
 const wizSaveBlocker = $('wiz-save-blocker');
 const wizSavingStatus = $('wiz-saving-status');
+const wizSavingPct = $('wiz-saving-pct');
 const wizDoneSub = $('wiz-done-sub');
 const wizDoneNote = $('wiz-done-note');
 const wizTestBtn = $('wiz-test-btn');
 const wizGotoStudio = $('wiz-goto-studio');
 
 const wizRecordBtnIdleHTML = wizRecordBtnInner ? wizRecordBtnInner.innerHTML : '';
-const WIZ_RECORD_IDLE_LABEL = 'Tap to record — starts after a 3-2-1 countdown';
-const WIZ_ZONE_IDLE_LABEL = 'Ready when you are — aim for 5-12 seconds';
+const WIZ_RECORD_IDLE_LABEL = 'Tap to record, starts after a 3-2-1 countdown';
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -307,6 +299,19 @@ async function persistVoiceTokens(voiceId, tokens, tokenCount, extra = null) {
   return record;
 }
 
+// The worker measures a reference's pitch on its decoded audio (tts-worker.js,
+// referenceInfo); kept with the saved voice whose tokens it was measured on, so that decode runs
+// once per voice instead of once per session. Re-encoded tokens get a new key and a new measurement.
+async function persistRefInfo({ key, pitch }) {
+  for (const v of voicesCache) {
+    if (!v.tokens || v.refInfo?.key === key || refInfoKey(v.tokens, 8) !== key) continue;
+    const refInfo = { key, pitch };
+    const fresh = (await getSavedVoices()).find((s) => s.id === v.id);
+    if (fresh?.tokens && refInfoKey(fresh.tokens, 8) === key) await saveVoice(Object.assign(normalizeVoiceRecord(fresh), { refInfo }));
+    v.refInfo = refInfo;
+  }
+}
+
 // Fill v1 records (id/name/refAudio/refText) up to the v2 shape in memory.
 function normalizeVoiceRecord(v) {
   if (!v) return v;
@@ -317,7 +322,6 @@ function normalizeVoiceRecord(v) {
     const ts = parseInt(String(v.id).slice(2), 10);
     v.createdAt = Number.isFinite(ts) && ts > 0 ? ts : Date.now();
   }
-  if (v.scriptId === undefined) v.scriptId = null;
   if (v.lang === undefined) v.lang = null;
   if (!v.source) v.source = 'uploaded';
   v.version = 2;
@@ -344,13 +348,222 @@ async function refreshVoices() {
 let nextEncodeId = 1;
 const pendingEncodes = new Map(); // requestId → { resolve, reject }
 
-function requestEncode(pcmF32) {
+// The voice encoder only analyzes new voices: never downloaded silently
+let encoderCached = false;   // complete in the model cache (reported by the worker)
+let encoderBytes = null;
+let encoderConsent = false;  // the user said yes this session (ONNX Runtime; the engine: ensureCloning)
+let speechBackend = null;    // 'engine' or ONNX Runtime's, once the speech model is ready
+
+function canEncodeSilently() { return encoderCached || encoderConsent; }
+const engineBackend = () => (speechBackend ? speechBackend === 'engine' : !!navigator.gpu);
+
+async function confirmEncoderDownload() {
+  if (canEncodeSilently()) return true;
+  if (engineBackend()) return ensureCloning();
+  const size = encoderBytes ? formatBytes(encoderBytes) : 'about 0.6 GB';
+  encoderConsent = await confirmDialog({
+    title: 'Download voice encoder?',
+    body: `Needed once to clone voices.${mobileDataNote()}`,
+    confirmLabel: `Download ${size}`,
+    cancelLabel: 'Not now',
+  });
+  return encoderConsent;
+}
+
+// ─── Voice cloning models ───────────────────────────────────────────────────
+// Cloning a voice takes two models besides the speech model: Whisper, which writes down what the
+// recording says, and the voice encoder, which turns it into the voice's tokens. Both come as one
+// download (download-worker.js): offered with the speech model on the first visit, or before the
+// first new voice. Nothing in the voice wizard asks again.
+
+const CLONING_FILES = ['engine/whisper-i8.bin', 'engine/encoder-f32.bin'];
+const CLONING_KEY = 'vocoloco-cloning'; // '1': chosen, so an interrupted download goes on by itself
+const cloning = { total: 0, stored: 0, loaded: 0, run: null }; // bytes; run: the download (Promise)
+let cloningDialogUpdate = null; // the progress dialog's, while it is open
+
+const cloningComplete = () => cloning.total > 0 && cloning.stored >= cloning.total;
+const cloningLeft = () => (cloning.total ? cloning.total - cloning.stored : 1.5e9);
+
+// A download-worker.js job: its final message (progress messages go to onProgress)
+function downloadJob(type, urls, onProgress) {
+  return new Promise((resolve, reject) => {
+    const w = new Worker('workers/download-worker.js?v=1', { type: 'module' });
+    w.onmessage = ({ data: m }) => {
+      if (m.type === 'progress') { onProgress?.(m); return; }
+      w.terminate();
+      if (m.type === 'error') reject(new Error(m.message)); else resolve(m);
+    };
+    w.onerror = (e) => { w.terminate(); reject(new Error(e.message || 'The download could not start')); };
+    w.postMessage({ type, urls });
+  });
+}
+
+async function cloningUrls() {
+  const base = await resolveModelBaseUrl();
+  return CLONING_FILES.map((f) => `${base}/${f}`);
+}
+
+function markCloningStored() {
+  encoderCached = true;
+  localStorage.setItem(ASR_CACHED_KEY, '1');
+}
+
+// How much of the two is stored
+async function checkCloning() {
+  const s = await downloadJob('inspect', await cloningUrls());
+  Object.assign(cloning, { total: s.totalBytes, stored: s.storedBytes });
+  if (cloningComplete()) markCloningStored();
+}
+
+// The download, one at a time; progress in the first visit's box, the progress dialog or the
+// activity pill
+function downloadCloning() {
+  localStorage.setItem(CLONING_KEY, '1');
+  keepStorage();
+  cloning.run ??= (async () => {
+    await downloadJob('download', await cloningUrls(), (m) => {
+      Object.assign(cloning, { loaded: m.loadedBytes, total: m.totalBytes });
+      onCloningProgress();
+    });
+    cloning.stored = cloning.total;
+    markCloningStored();
+  })().finally(() => {
+    cloning.run = null;
+    if (!combinedDownload && activityLabel === 'Downloading voice cloning' && !isGenerating) hideProgress();
+  });
+  return cloning.run;
+}
+
+function onCloningProgress() {
+  if (combinedDownload) { showCombinedProgress(); return; }
+  activityLabel = 'Downloading voice cloning';
+  if (cloning.total) setProgressPercent((cloning.loaded / cloning.total) * 100);
+  cloningDialogUpdate?.();
+}
+
+// Before a new voice: the cloning models, asked for once and downloaded in one go. False when
+// the user says no or lets it go on in the background
+async function ensureCloning() {
+  if (!engineBackend()) return true; // ONNX Runtime: its encoder asks on its own (confirmEncoderDownload)
+  try { await checkCloning(); } catch { /* offline: say so below if anything is missing */ }
+  if (cloningComplete()) return true;
+  if (!cloning.run) {
+    const ok = await confirmDialog({
+      title: 'Download voice cloning?',
+      body: `Cloning a voice needs two more models: speech recognition, which writes down what your recording says, and the voice encoder. One-time download, stored on this device.${mobileDataNote()}`,
+      confirmLabel: `Download ${formatBytes(cloningLeft())}`,
+      cancelLabel: 'Not now',
+    });
+    if (!ok) return false;
+  }
+  return cloningProgressDialog();
+}
+
+// Progress of the cloning download in a dialog; true once it is done, false when the user lets it
+// go on in the background (the activity pill shows it, a toast says when it's ready)
+function cloningProgressDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'vl-overlay';
+    const dialog = document.createElement('div');
+    dialog.className = 'vl-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'vl-cloning-title');
+    const title = document.createElement('h3');
+    title.id = 'vl-cloning-title';
+    title.textContent = 'Downloading voice cloning';
+    const body = document.createElement('p');
+    body.textContent = 'Keep this tab open. The voice wizard opens when it is done.';
+    const track = document.createElement('div');
+    track.className = 'vl-progress';
+    const fill = document.createElement('div');
+    track.append(fill);
+    const stats = document.createElement('p');
+    stats.className = 'vl-progress-stats';
+    const actions = document.createElement('div');
+    actions.className = 'vl-actions';
+    const hide = document.createElement('button');
+    hide.className = 'vl-btn vl-btn-cancel';
+    hide.textContent = 'Continue in background';
+    actions.append(hide);
+    dialog.append(title, body, track, stats, actions);
+    overlay.append(dialog);
+    document.body.append(overlay);
+    hide.focus();
+    cloningDialogUpdate = () => {
+      fill.style.width = `${cloning.total ? (cloning.loaded / cloning.total) * 100 : 0}%`;
+      stats.textContent = cloning.total ? `${formatBytes(cloning.loaded)} of ${formatBytes(cloning.total)}` : 'Starting…';
+    };
+    cloningDialogUpdate();
+    let open = true;
+    const close = (result) => {
+      if (!open) return;
+      open = false;
+      cloningDialogUpdate = null;
+      overlay.remove();
+      resolve(result);
+    };
+    hide.addEventListener('click', () => close(false));
+    downloadCloning().then(() => {
+      if (open) close(true);
+      else toast('Voice cloning is ready', { type: 'success' });
+    }, (e) => {
+      close(false);
+      toast(`The voice cloning download failed: ${e.message}`, { type: 'error' });
+    });
+  });
+}
+
+async function requestEncode(pcmF32) {
+  if (!(await confirmEncoderDownload())) {
+    throw Object.assign(new Error('The voice encoder was not downloaded'), { code: 'encoder-declined' });
+  }
+  setBusy('voice', true);
+  // phones: after any transcription (Whisper's worker ends with it, see requestTranscript)
+  if (LOW_MEMORY) return encodeAlone(pcmF32).finally(() => setBusy('voice', false));
+  setActivity('Analyzing voice');
+  showProgress('indeterminate');
   return new Promise((resolve, reject) => {
     if (!ttsWorker) { reject(new Error('Engine not running')); return; }
     const requestId = nextEncodeId++;
     pendingEncodes.set(requestId, { resolve, reject });
     const refAudio = new Float32Array(pcmF32); // copy — the stored record keeps its buffer
     ttsWorker.postMessage({ type: 'encode-reference', requestId, refAudio }, [refAudio.buffer]);
+  }).finally(() => {
+    setBusy('voice', false);
+    if (!isGenerating) hideProgress();
+  });
+}
+
+// Phones: the voice encoder in a worker of its own, ended right after, while the speech model's
+// worker is stopped (parkSpeech, encoder-worker.js)
+function encodeAlone(pcmF32) {
+  return onGpu(async () => {
+    await parkSpeech();
+    const base = await resolveModelBaseUrl();
+    setStatus('Analyzing voice…');
+    setActivity('Analyzing voice');
+    showProgress('indeterminate');
+    const w = new Worker('workers/encoder-worker.js?v=1', { type: 'module' });
+    try {
+      return await new Promise((resolve, reject) => {
+        w.onmessage = ({ data: m }) => {
+          if (m.type === 'progress') onEncoderDownload(m);
+          else if (m.type === 'encoded') resolve(m);
+          else if (m.type === 'error') reject(Object.assign(new Error(m.message), { code: m.code }));
+        };
+        w.onerror = (e) => reject(new Error(e.message || 'The voice encoder could not start'));
+        const pcm = new Float32Array(pcmF32); // copy — the stored record keeps its buffer
+        w.postMessage({ type: 'encode', id: 1, pcm, base }, [pcm.buffer]);
+      });
+    } catch (e) {
+      if (e.code === 'models-gone') modelsGone();
+      throw e;
+    } finally {
+      w.terminate();
+      if (!isGenerating) { setStatus('Ready'); hideProgress(); }
+    }
   });
 }
 
@@ -393,6 +606,7 @@ function encodeVoiceShared(voice) {
 // Lazy migration wrapper with guards (never during generation).
 async function ensureVoiceTokens(voice) {
   if (!voice || (voice.tokens && !needsRefPrep(voice)) || !isReady || !encoderAvailable || isGenerating) return;
+  if (!canEncodeSilently()) return; // background work never asks for the download
   try {
     await encodeVoiceShared(voice);
     if (currentView === 'voices') renderVoicesView();
@@ -455,7 +669,7 @@ function onDesignChange() {
   if (isGenerating) return; // controls are locked during generation (incl. keyboard)
   if (selectedSavedVoice) selectVoice(null);
   if (voiceLocked || sessionChainRef) {
-    if (voiceLocked) toast('Voice lock cleared — settings changed');
+    if (voiceLocked) toast('Voice lock cleared: settings changed');
     voiceLocked = false;
     sessionChainRef = null;
     updateVoiceLockBtn();
@@ -528,6 +742,23 @@ textEl.addEventListener('input', () => {
   charCount.parentElement.classList.toggle('char-count-warn', len >= MAX_TEXT_LEN * 0.9);
 });
 
+// ─── Pause buttons: [pause], [pause 2s] at the cursor (or over the selection) ──
+
+function insertTag(tag) {
+  if (textEl.disabled) return;
+  const start = textEl.selectionStart ?? textEl.value.length, end = textEl.selectionEnd ?? start;
+  const before = textEl.value.slice(0, start), after = textEl.value.slice(end);
+  const text = (before && !/\s$/.test(before) ? ' ' : '') + tag + (after && !/^\s/.test(after) ? ' ' : '');
+  if (before.length + text.length + after.length > MAX_TEXT_LEN) { toast('The text is at its maximum length.', { type: 'error' }); return; }
+  textEl.focus();
+  textEl.setRangeText(text, start, end, 'end');
+  textEl.dispatchEvent(new Event('input'));
+}
+const tagBar = $('tag-bar');
+// pointerdown would move the focus (and on phones the cursor) out of the text box
+tagBar.addEventListener('pointerdown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+tagBar.addEventListener('click', (e) => { const b = e.target.closest('button[data-tag]'); if (b) insertTag(b.dataset.tag); });
+
 // ─── Voice mode UI ──────────────────────────────────────────────────────────
 
 function isCloneMode() {
@@ -565,8 +796,8 @@ if (voiceLockBtn) {
     voiceLocked = !voiceLocked;
     updateVoiceLockBtn();
     toast(voiceLocked
-      ? 'Voice locked — the next generations reuse this exact voice'
-      : 'Voice lock off — each generation gets a fresh voice');
+      ? 'Voice locked: the next generations reuse this voice'
+      : 'Voice lock off: each generation gets a fresh voice');
   });
 }
 
@@ -579,27 +810,58 @@ function selectVoice(v) {
 }
 
 // ─── Progress bar ───────────────────────────────────────────────────────────
+// The Studio's bar, and the activity pill in the top bar, seen from every tab (on a phone the
+// Studio is out of sight while a voice is tested): what runs (setActivity) and how far.
+
+const activityEl = $('activity');
+const activityText = $('activity-text');
+let activityLabel = 'Working';
+let activityPct = null; // null: no measure yet
+let busyBtn = null; // the button whose job runs (a voice's Test): shows the same
+
+function renderActivity() {
+  const text = activityPct == null ? `${activityLabel}…` : `${activityLabel} ${Math.floor(activityPct)}%`;
+  activityText.textContent = text;
+  activityEl.style.setProperty('--pct', `${activityPct ?? 0}%`);
+  if (busyBtn) {
+    busyBtn.textContent = activityPct == null ? `${activityLabel.split(' ')[0]}…` : `${Math.floor(activityPct)}%`; // a narrow button
+    busyBtn.style.setProperty('--pct', `${activityPct ?? 0}%`);
+  }
+}
+
+function setActivity(label) {
+  activityLabel = label;
+  activityPct = null;
+  renderActivity();
+}
 
 function showProgress(mode) {
   progressBar.classList.remove('hidden');
   if (mode === 'indeterminate') {
     progressBar.classList.add('indeterminate');
     progressBar.style.width = '';
+    activityPct = null;
   } else {
     progressBar.classList.remove('indeterminate');
   }
+  activityEl.classList.remove('hidden');
+  renderActivity();
 }
 
 function setProgressPercent(pct) {
   progressBar.classList.remove('hidden');
   progressBar.classList.remove('indeterminate');
   progressBar.style.width = Math.min(100, pct) + '%';
+  activityPct = Math.min(100, pct);
+  activityEl.classList.remove('hidden');
+  renderActivity();
 }
 
 function hideProgress() {
   progressBar.classList.add('hidden');
   progressBar.classList.remove('indeterminate');
   progressBar.style.width = '0%';
+  activityEl.classList.add('hidden');
 }
 
 // ─── Loading overlay / first-run experience ─────────────────────────────────
@@ -607,31 +869,188 @@ function hideProgress() {
 let rateSamples = [];
 let lastLoadingTextUpdate = 0;
 
-function onDownloadPlan(msg) {
-  rateSamples = [];
+// ─── Download consent ───────────────────────────────────────────────────────
+// The worker waits for 'start-download' before fetching anything (people on
+// mobile data or short on storage may not want gigabytes right now).
+
+let downloadPlan = null;
+
+function mobileDataNote() {
+  const c = navigator.connection; // Chromium only; absent elsewhere
+  return c && (c.type === 'cellular' || c.saveData) ? ' Mobile data: Wi-Fi recommended.' : '';
+}
+
+function downloadSizeText(plan) {
+  if (plan.totalBytes) return formatBytes(plan.totalBytes - plan.cachedBytes);
+  const onnx = plan.backend ? plan.backend === 'onnx' : !navigator.gpu; // a first visit's estimate (worker init)
+  return onnx ? 'about 2.4 GB' : 'about 1.2 GB';
+}
+
+// The overlay covers the text box; longer messages (narrow screens) grow the box
+function fitLoadingOverlay() {
   if (!loadingOverlay || !loadingOverlay.isConnected) return;
-  if (msg.filesToDownload > 0) {
-    if (msg.firstRun) {
-      loadingTitle.textContent = 'First-time setup';
-      loadingSub.textContent = 'VocoLoco runs a 600M-parameter AI voice model directly in your browser — nothing you type or generate ever leaves your device. The model (~2.4 GB) downloads once and is stored locally for instant starts next time. Keep this tab open; this can take a few minutes.';
-    } else {
-      loadingTitle.textContent = 'Resuming download';
-      loadingSub.textContent = msg.cachedBytes > 0
-        ? `${formatBytes(msg.cachedBytes)} already saved — fetching the rest.`
-        : 'Fetching the remaining model files.';
-    }
-    if (msg.totalBytes) loadingTrack.classList.remove('hidden');
+  const box = loadingOverlay.parentElement;
+  box.dataset.baseMinHeight ??= box.style.minHeight; // the inline 180px
+  const cs = getComputedStyle(loadingOverlay);
+  const kids = [...loadingOverlay.children].filter(el => getComputedStyle(el).display !== 'none');
+  const need = kids.reduce((s, el) => s + el.offsetHeight, 0)
+    + (parseFloat(cs.rowGap) || 0) * Math.max(0, kids.length - 1)
+    + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  box.style.minHeight = box.dataset.baseMinHeight;
+  if (need > box.clientHeight) box.style.minHeight = `${Math.ceil(need)}px`;
+}
+window.addEventListener('resize', fitLoadingOverlay);
+
+function askModelDownload(plan, later = false) {
+  const size = downloadSizeText(plan);
+  if (!loadingOverlay || !loadingOverlay.isConnected) {
+    // Engine restarted after the overlay was gone: ask in a dialog instead
+    confirmDialog({
+      title: 'Download voice model?',
+      body: `One-time download, stored on this device.${mobileDataNote()}`,
+      confirmLabel: `Download ${size}`,
+      cancelLabel: 'Not now',
+    }).then((ok) => {
+      if (ok) startModelDownload();
+      else setStatus('Voice model not downloaded');
+    });
+    return;
+  }
+  const spinner = $('loading-spinner');
+  if (spinner) spinner.style.display = 'none';
+  loadingTrack.classList.add('hidden');
+  loadingStats.textContent = '';
+  if (later) {
+    loadingTitle.textContent = 'Voice model not downloaded';
+    loadingSub.textContent = '';
+  } else if (plan.cachedBytes > 0) {
+    loadingTitle.textContent = 'Finish download?';
+    loadingSub.textContent = `${size} left.`;
+  } else if (offerCloning) {
+    loadingTitle.textContent = 'Download the models?';
+    loadingSub.textContent = 'One-time download, stored on this device. Voice cloning adds speech recognition and the voice encoder.';
   } else {
+    loadingTitle.textContent = 'Download voice model?';
+    loadingSub.textContent = 'One-time download, stored on this device.';
+  }
+  loadingSub.textContent = (loadingSub.textContent + mobileDataNote()).trim();
+  // with cloning: everything at once, or the speech model alone
+  const speechBytes = plan.totalBytes ? plan.totalBytes - plan.cachedBytes : 1.2e9;
+  downloadStartBtn.textContent = offerCloning ? `Download all · ${plan.totalBytes ? '' : 'about '}${formatBytes(speechBytes + cloningLeft())}` : `Download ${size}`;
+  downloadSpeechOnlyBtn.textContent = `Speech only · ${size}`;
+  downloadSpeechOnlyBtn.classList.toggle('hidden', !offerCloning);
+  downloadLaterBtn.classList.toggle('hidden', later);
+  loadingActions.classList.remove('hidden');
+  hideProgress();
+  setStatus(later ? 'Voice model not downloaded' : 'Download needed');
+  fitLoadingOverlay();
+}
+
+// Downloaded models are best-effort storage unless the site asks to keep them, and browsers
+// clear that when a device runs low on space (an iPhone did, right after a 0.9 GB download).
+// Chrome and Safari decide without asking; Firefox asks once.
+async function keepStorage() {
+  try {
+    if (!navigator.storage?.persist || await navigator.storage.persisted()) return;
+    if (!await navigator.storage.persist()) console.warn('[storage] not persistent: the browser may clear the models when space runs low');
+  } catch { /* not supported */ }
+}
+
+// The browser deleted the models while the app was open (a read found the file gone): say so,
+// and start the engine again, which asks before downloading
+let modelsGoneAsked = false;
+function modelsGone() {
+  if (modelsGoneAsked) return;
+  modelsGoneAsked = true;
+  confirmDialog({
+    title: 'The models were deleted',
+    body: 'The browser removed the downloaded models from this device, which browsers do when storage runs low. Download them again?',
+    confirmLabel: 'Download again', cancelLabel: 'Later',
+  }).then((ok) => {
+    modelsGoneAsked = false;
+    if (!ok) return;
+    rejectPendingEncodes('Engine restarted');
+    try { ttsWorker.terminate(); } catch { /* already dead */ }
+    isReady = false;
+    initWorker();
+  });
+}
+
+// withCloning: the voice cloning models too, as one download (see offerCloning)
+function startModelDownload(withCloning = false) {
+  keepStorage();
+  const both = withCloning && offerCloning;
+  if (loadingOverlay && loadingOverlay.isConnected) {
+    loadingActions.classList.add('hidden');
+    const spinner = $('loading-spinner');
+    if (spinner) spinner.style.display = '';
+    loadingTitle.textContent = downloadPlan.cachedBytes > 0 ? 'Resuming download' : both ? 'Downloading the models' : 'Downloading voice model';
+    loadingSub.textContent = 'Keep this tab open.';
+    if (downloadPlan.totalBytes) loadingTrack.classList.remove('hidden');
+    fitLoadingOverlay();
+  }
+  setActivity('Downloading models');
+  showProgress('indeterminate');
+  setStatus('Downloading…');
+  if (both) {
+    combinedDownload = { loaded: downloadPlan.cachedBytes || 0, total: downloadPlan.totalBytes || 0 };
+    downloadCloning().catch((e) => toast(`The voice cloning download failed: ${e.message}`, { type: 'error' }));
+  } else if (offerCloning) localStorage.setItem(CLONING_KEY, '0');
+  ttsWorker.postMessage({ type: 'start-download' });
+}
+
+downloadStartBtn?.addEventListener('click', () => startModelDownload(true));
+downloadSpeechOnlyBtn?.addEventListener('click', () => startModelDownload(false));
+downloadLaterBtn?.addEventListener('click', () => askModelDownload(downloadPlan, true));
+
+// The first visit's question offers voice cloning too (when the engine runs and it isn't stored)
+let offerCloning = false;
+
+async function onDownloadPlan(msg) {
+  rateSamples = [];
+  downloadPlan = msg;
+  if (msg.filesToDownload > 0) {
+    offerCloning = false;
+    if (msg.backend === 'engine') {
+      try { await checkCloning(); offerCloning = !cloningComplete(); } catch { /* no size: speech only */ }
+    }
+    askModelDownload(msg);
+  } else if (loadingOverlay && loadingOverlay.isConnected) {
     loadingTitle.textContent = 'Loading VocoLoco…';
     loadingSub.textContent = '';
   }
 }
 
+// Time left as 45s, 4m 10s or 1h 5m
+function formatDuration(s) {
+  s = Math.max(1, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h ${m}m` : m ? `${m}m ${s % 60}s` : `${s}s`;
+}
+
+// First visit with voice cloning chosen: the speech model's download and the cloning one show as
+// one, and the app opens once both are done
+let combinedDownload = null; // { loaded, total } of the speech model's part
+
+function showCombinedProgress() {
+  const c = combinedDownload;
+  renderDownloadProgress({ loadedBytes: c.loaded + cloning.loaded, totalBytes: c.total && cloning.total ? c.total + cloning.total : null });
+}
+
 function onDownloadProgress(msg) {
+  if (!combinedDownload) { renderDownloadProgress(msg); return; }
+  Object.assign(combinedDownload, { loaded: msg.loadedBytes ?? 0, total: msg.totalBytes ?? 0 });
+  showCombinedProgress();
+}
+
+function renderDownloadProgress(msg) {
   if (msg.loadedBytes != null && msg.totalBytes) {
     const pct = (msg.loadedBytes / msg.totalBytes) * 100;
     setProgressPercent(pct);
-    if (loadingFill && loadingFill.isConnected) loadingFill.style.width = pct.toFixed(1) + '%';
+    if (loadingFill && loadingFill.isConnected) {
+      loadingTrack.classList.remove('hidden'); // a first visit's consent had no size yet
+      loadingFill.style.width = pct.toFixed(1) + '%';
+    }
     const now = performance.now();
     rateSamples.push({ t: now, bytes: msg.loadedBytes });
     while (rateSamples.length > 2 && now - rateSamples[0].t > 12000) rateSamples.shift();
@@ -644,12 +1063,12 @@ function onDownloadProgress(msg) {
         if (rate > 1) {
           suffix = ` · ${formatBytes(rate)}/s`;
           const etaS = (msg.totalBytes - msg.loadedBytes) / rate;
-          suffix += etaS < 60 ? ' · under a minute left' : ` · about ${Math.round(etaS / 60)} min left`;
+          suffix += ` · ${formatDuration(etaS)}`;
         }
       }
       const line = `${formatBytes(msg.loadedBytes)} of ${formatBytes(msg.totalBytes)}${suffix}`;
       if (loadingStats && loadingStats.isConnected) loadingStats.textContent = line;
-      setStatus(`Downloading models — ${line}`);
+      setStatus(`Downloading models: ${line}`);
     }
   } else {
     showProgress('indeterminate');
@@ -657,7 +1076,7 @@ function onDownloadProgress(msg) {
     if (now - lastLoadingTextUpdate > 2000) {
       lastLoadingTextUpdate = now;
       const line = msg.fileIndex
-        ? `File ${msg.fileIndex}/${msg.fileCount} — ${msg.detail || 'downloading…'}`
+        ? `File ${msg.fileIndex}/${msg.fileCount}: ${msg.detail || 'downloading…'}`
         : (msg.detail || 'Downloading models…');
       if (loadingStats && loadingStats.isConnected) loadingStats.textContent = line;
       setStatus(line);
@@ -666,6 +1085,8 @@ function onDownloadProgress(msg) {
 }
 
 function onLoadingPhase(msg) {
+  if (combinedDownload && cloning.run) return; // the box keeps showing the download (see 'ready')
+  setActivity('Loading the model');
   showProgress('indeterminate');
   const warmingUp = ['session-main', 'session-decoder', 'session-encoder', 'warmup'].includes(msg.phase);
   if (warmingUp) {
@@ -675,15 +1096,25 @@ function onLoadingPhase(msg) {
       loadingSub.textContent = 'First start after a download takes a little longer while GPU shaders compile (~10–30 s).';
       loadingTrack.classList.add('hidden');
       loadingStats.textContent = '';
+      fitLoadingOverlay();
     }
   } else {
     setStatus(msg.detail || 'Loading…');
+    if (loadingOverlay && loadingOverlay.isConnected) loadingStats.textContent = msg.detail || '';
   }
 }
 
 // The voice encoder downloads on first use (cloning), not with the main model
 function onEncoderDownload(msg) {
-  if (wiz.step === 'saving' && wizSavingStatus) wizSavingStatus.textContent = msg.done ? 'Analyzing voice… (one-time setup)' : msg.detail;
+  if (msg.done) encoderCached = true;
+  if (wiz.step === 'saving') {
+    if (msg.done) setWizSavingStatus('Analyzing voice… (one-time setup)');
+    else setWizSavingStatus('Downloading the voice encoder', msg.totalBytes
+      ? Math.min(100, Math.floor((msg.loadedBytes / msg.totalBytes) * 100)) + '%'
+      : Math.round(msg.loadedBytes / 1e6) + ' MB');
+  }
+  if (msg.done) setActivity('Analyzing voice');
+  else if (msg.totalBytes) { activityLabel = 'Downloading encoder'; setProgressPercent((msg.loadedBytes / msg.totalBytes) * 100); }
   if (!isGenerating) setStatus(msg.done ? 'Ready' : msg.detail);
 }
 
@@ -691,12 +1122,19 @@ function onEncoderDownload(msg) {
 
 function enableUI() {
   isReady = true;
-  setStatus('Ready');
-  hideProgress();
+  statusEl.classList.remove('vl-sr-only'); // shown in the loading box until now
+  if (!isGenerating) { // else a generation waited for the model (resumeSpeech) and goes on now
+    setStatus('Ready');
+    hideProgress();
+  }
   if (loadingOverlay && loadingOverlay.isConnected) {
     loadingOverlay.style.transition = 'opacity 0.3s';
     loadingOverlay.style.opacity = '0';
-    setTimeout(() => loadingOverlay.remove(), 300);
+    setTimeout(() => {
+      const box = loadingOverlay.parentElement;
+      if (box.dataset.baseMinHeight != null) box.style.minHeight = box.dataset.baseMinHeight;
+      loadingOverlay.remove();
+    }, 300);
   }
   generateBtn.disabled = false;
   textEl.disabled = false;
@@ -710,10 +1148,10 @@ function enableUI() {
 }
 
 function onReady(backend) {
-  backendIsCpu = backend !== 'webgpu';
+  const isGpu = backend === 'webgpu' || backend === 'engine';
+  backendIsCpu = !isGpu;
   const badge = $('backend-badge');
   if (badge) {
-    const isGpu = backend === 'webgpu';
     badge.textContent = isGpu ? 'GPU' : 'CPU';
     badge.classList.remove('hidden');
     if (isGpu) {
@@ -730,9 +1168,98 @@ function onReady(backend) {
   migrateVoicesInBackground();
 }
 
+// ─── Memory check ───────────────────────────────────────────────────────────
+// The app holds up to MEMORY_NEED_MB of GPU memory at once on a phone (a generation with a long
+// reference: 1.20 GB measured; Whisper takes ~0.35 GB), and iPhones kill a tab at ~1.5 GB. Before the
+// first download the worker checks that it can hold that much (tts-worker.js, probeMemory).
+// Where it can't, iOS kills the tab instead of saying so: the check is noted as running first,
+// and a page that finds the note on load knows how the last one ended.
+const MEMORY_NEED_MB = 1280;
+const MEMORY_KEY = 'vocoloco-memory'; // { running | passed | failed: MB }
+// Set while a model loads or works, cleared when done or when the page is left: still set on
+// the next load means the system closed the tab mid-way, almost always for memory
+const BUSY_KEY = 'vocoloco-busy';
+const ASR_OFF_KEY = 'vocoloco-asr-off-2'; // Whisper got the tab killed here: no auto-transcription (-2: the engine's)
+
+let memoryCheck = {};
+try { memoryCheck = JSON.parse(localStorage.getItem(MEMORY_KEY)) || {}; } catch { /* none yet */ }
+if (memoryCheck.running) saveMemoryCheck({ failed: memoryCheck.running }); // the tab died during the check
+const busy = new Set(localStorage.getItem(BUSY_KEY)?.split(',') ?? []);
+const closedWhile = [...busy];
+busy.clear();
+localStorage.removeItem(BUSY_KEY);
+
+function saveMemoryCheck(state) {
+  memoryCheck = state;
+  localStorage.setItem(MEMORY_KEY, JSON.stringify(state));
+}
+
+function setBusy(what, on) {
+  if (on) busy.add(what); else busy.delete(what);
+  if (busy.size) localStorage.setItem(BUSY_KEY, [...busy].join(','));
+  else localStorage.removeItem(BUSY_KEY);
+}
+// A page that is left (reload, close) wasn't killed: neither marker may outlive it
+window.addEventListener('pagehide', () => {
+  localStorage.removeItem(BUSY_KEY);
+  if (memoryCheck.running) localStorage.removeItem(MEMORY_KEY);
+});
+window.addEventListener('pageshow', () => {
+  if (busy.size) localStorage.setItem(BUSY_KEY, [...busy].join(','));
+  if (memoryCheck.running) saveMemoryCheck(memoryCheck);
+});
+
+// The last page was closed by the system: say what it was doing, and don't run into it again
+if (closedWhile.length) {
+  const doing = { load: 'loading the voice model', generate: 'generating speech', voice: 'analyzing a voice', transcribe: 'transcribing a recording' };
+  const what = closedWhile.map((k) => doing[k]).filter(Boolean).join(' and ') || 'working';
+  if (closedWhile.includes('load')) saveMemoryCheck({ failed: MEMORY_NEED_MB });
+  if (closedWhile.includes('transcribe') && LOW_MEMORY) localStorage.setItem(ASR_OFF_KEY, '1');
+  const hint = closedWhile.includes('transcribe') && LOW_MEMORY
+    ? ' Automatic transcription is off on this device now: type what the recording says.'
+    : closedWhile.includes('load') ? '' : ' Close other apps and tabs; shorter texts and recordings need less memory.';
+  confirmDialog({
+    title: 'The browser closed VocoLoco',
+    body: `It was ${what} when this device ran out of memory.${hint}`,
+    confirmLabel: 'OK', cancelLabel: null,
+  });
+}
+
+// Shown instead of the model when this device can't hold it (see above)
+function showMemoryFailure() {
+  showLoadFailure('Not enough memory',
+    `The voice model needs about ${formatBytes(MEMORY_NEED_MB * 1048576)} of memory, and this device can't spare that right now. Close other apps and browser tabs, then check again.`,
+    { label: 'Check again', run: () => { saveMemoryCheck({}); location.reload(); } });
+}
+
+// The loading overlay (or a dialog once it's gone) explains why there is no model
+function showLoadFailure(title, text, action = null) {
+  setStatus(title);
+  hideProgress();
+  if (!loadingOverlay || !loadingOverlay.isConnected) {
+    confirmDialog({ title, body: text, confirmLabel: action?.label ?? 'OK', cancelLabel: action ? 'Close' : null })
+      .then((ok) => { if (ok) action?.run(); });
+    return;
+  }
+  loadingTitle.textContent = title;
+  loadingSub.textContent = text;
+  const spinner = $('loading-spinner');
+  if (spinner) spinner.style.display = 'none';
+  loadingTrack.classList.add('hidden');
+  loadingStats.textContent = '';
+  downloadStartBtn.classList.add('hidden');
+  downloadLaterBtn.classList.add('hidden');
+  loadRetryBtn.classList.toggle('hidden', !action);
+  loadRetryBtn.textContent = action?.label ?? '';
+  loadRetryBtn.onclick = action?.run ?? null;
+  loadingActions.classList.toggle('hidden', !action);
+  fitLoadingOverlay();
+}
+
 // ─── Worker ─────────────────────────────────────────────────────────────────
 
 let pendingJob = null; // { jobId, resolve }
+let workerAnswered = false; // any message from the current worker yet (initWorker)
 
 function resolveJob(result) {
   const p = pendingJob;
@@ -741,37 +1268,43 @@ function resolveJob(result) {
 }
 
 function sendJob(msg) {
-  return new Promise((resolve) => {
-    pendingJob = { jobId: msg.jobId, resolve };
-    const transfers = [];
-    if (msg.refAudio) transfers.push(msg.refAudio.buffer);
-    if (msg.refTokens) transfers.push(msg.refTokens.buffer);
-    ttsWorker.postMessage(msg, transfers);
-  });
+  setBusy('generate', true);
+  const run = async () => {
+    if (!await resumeSpeech()) return { kind: 'error', message: 'The voice model could not start again.' };
+    return new Promise((resolve) => {
+      pendingJob = { jobId: msg.jobId, resolve };
+      const transfers = [];
+      if (msg.refAudio) transfers.push(msg.refAudio.buffer);
+      if (msg.refTokens) transfers.push(msg.refTokens.buffer);
+      ttsWorker.postMessage(msg, transfers);
+    });
+  };
+  return (LOW_MEMORY ? onGpu(run) : run()).finally(() => setBusy('generate', false));
 }
 
 function initWorker() {
   rejectPendingEncodes('Engine restarted');
   resolveJob({ kind: 'cancelled' });
-  ttsWorker = new Worker('workers/tts-worker.js?v=8', { type: 'module' });
+  speechParked = null; // a new worker either way
+  ttsWorker = new Worker('workers/tts-worker.js?v=11', { type: 'module' });
+  workerAnswered = false;
   ttsWorker.onerror = (e) => {
     console.error('Worker error:', e);
-    setStatus('Engine failed to load — check the console and reload the page.');
-    hideProgress();
-    if (loadingOverlay && loadingOverlay.isConnected) {
-      loadingTitle.textContent = 'Something went wrong';
-      loadingSub.textContent = e.message || 'The speech engine could not start. Reload the page to try again.';
-      const spinner = $('loading-spinner');
-      if (spinner) spinner.style.display = 'none';
-    }
+    setBusy('load', false);
+    if (onSpeechReady) { isReady = false; onSpeechReady(false); onSpeechReady = null; }
+    showLoadFailure('Something went wrong', e.message || 'The speech engine could not start. Reload the page to try again.');
   };
   ttsWorker.onmessage = (e) => {
     const msg = e.data;
+    workerAnswered = true;
     switch (msg.type) {
       case 'plan':
         onDownloadPlan(msg);
         break;
       case 'progress':
+        // Marked from here on (not during the download): the weights going into memory is
+        // where a phone that can't hold them gets the tab killed
+        if (msg.phase === 'session-main') setBusy('load', true);
         if (msg.stage === 'downloading') onDownloadProgress(msg);
         else if (msg.stage === 'loading') onLoadingPhase(msg);
         else if (msg.stage === 'generating') onGenProgress(msg);
@@ -779,9 +1312,45 @@ function initWorker() {
         else if (msg.stage === 'encoder-download') onEncoderDownload(msg);
         else setStatus(msg.detail || '');
         break;
-      case 'ready':
+      case 'memory-check':
+        if (msg.state === 'start') { // noted before the worker allocates anything
+          saveMemoryCheck({ running: MEMORY_NEED_MB });
+          ttsWorker.postMessage({ type: 'memory-check-go' });
+          break;
+        }
+        saveMemoryCheck(msg.ok ? { passed: MEMORY_NEED_MB } : { failed: MEMORY_NEED_MB });
+        if (!msg.ok) { setBusy('load', false); showMemoryFailure(); }
+        break;
+      case 'ready': {
+        setBusy('load', false);
         encoderAvailable = msg.encoderAvailable !== false;
-        onReady(msg.backend);
+        encoderCached ||= !!msg.encoderCached;
+        encoderBytes = msg.encoderBytes || null;
+        speechBackend = msg.backend;
+        const ready = () => {
+          onReady(msg.backend);
+          onSpeechReady?.(true);
+          onSpeechReady = null;
+        };
+        if (combinedDownload && cloning.run) {
+          // the first visit's download goes on with voice cloning; the app opens after it
+          if (loadingOverlay?.isConnected) loadingTitle.textContent = 'Downloading voice cloning';
+          showCombinedProgress();
+          cloning.run.catch(() => {}).finally(() => { combinedDownload = null; ready(); });
+        } else {
+          combinedDownload = null;
+          ready();
+          // chosen before but not finished (tab closed mid-way): goes on by itself
+          if (msg.backend === 'engine' && localStorage.getItem(CLONING_KEY) === '1' && !cloning.run) {
+            checkCloning().then(() => { if (!cloningComplete()) return downloadCloning(); }).catch(() => {});
+          }
+        }
+        keepStorage(); // also for models stored before the app asked
+        break;
+      }
+      case 'released':
+        onModelReleased?.();
+        onModelReleased = null;
         break;
       case 'encoder-status':
         encoderAvailable = msg.available;
@@ -793,6 +1362,9 @@ function initWorker() {
       case 'cancelled':
         resolveJob({ kind: 'cancelled' });
         break;
+      case 'ref-info':
+        persistRefInfo(msg).catch((err) => console.warn('Saving the reference info failed:', err.message));
+        break;
       case 'encoded': {
         const p = pendingEncodes.get(msg.requestId);
         if (p) { pendingEncodes.delete(msg.requestId); p.resolve(msg); }
@@ -801,30 +1373,85 @@ function initWorker() {
       case 'encode-error': {
         const p = pendingEncodes.get(msg.requestId);
         if (p) { pendingEncodes.delete(msg.requestId); p.reject(Object.assign(new Error(msg.message), { code: msg.code })); }
+        if (msg.code === 'models-gone') modelsGone();
         break;
       }
       case 'error':
+        if (msg.code === 'models-gone') modelsGone();
+        if (msg.code === 'gpu-lost') {
+          console.warn(msg.message);
+          rejectPendingEncodes(msg.message);
+          resolveJob({ kind: 'error', message: msg.message });
+          try { ttsWorker.terminate(); } catch { /* already dead */ }
+          isReady = false;
+          toast('The GPU stopped. Restarting the engine…', { type: 'error' });
+          initWorker();
+          break;
+        }
         if (pendingJob) {
           resolveJob({ kind: 'error', message: msg.message });
         } else {
           console.error(msg.message);
-          setStatus(msg.message);
-          hideProgress();
-          if (loadingOverlay && loadingOverlay.isConnected) {
-            loadingTitle.textContent = 'Something went wrong';
-            loadingSub.textContent = msg.message;
-            const spinner = $('loading-spinner');
-            if (spinner) spinner.style.display = 'none';
-          }
+          setBusy('load', false);
+          if (onSpeechReady) { isReady = false; onSpeechReady(false); onSpeechReady = null; }
+          showLoadFailure(msg.code === 'no-engine' ? "This browser isn't supported" : 'Something went wrong', msg.message);
         }
         break;
     }
   };
+  // A device that couldn't hold the model gets no download (see showMemoryFailure)
+  if (memoryCheck.failed >= MEMORY_NEED_MB) { showMemoryFailure(); return; }
   const worker = ttsWorker;
   resolveModelBaseUrl().then((modelBaseUrl) => {
-    worker.postMessage({ type: 'init', modelBaseUrl, forceCPU: location.search.includes('cpu') });
+    const check = !(memoryCheck.passed >= MEMORY_NEED_MB);
+    worker.postMessage({
+      type: 'init', modelBaseUrl, forceCPU: location.search.includes('cpu'), confirmDownload: true,
+      lowMemory: LOW_MEMORY, probeBytes: check ? MEMORY_NEED_MB * 1048576 : 0,
+    });
+    // The worker answers init right away; silence means its scripts never finished loading
+    setTimeout(() => {
+      if (ttsWorker !== worker || workerAnswered) return;
+      showLoadFailure("VocoLoco couldn't start", "The speech engine's scripts didn't finish loading. Check your connection, then reload the page.",
+        { label: 'Reload', run: () => location.reload() });
+    }, 45e3);
   });
+  setActivity('Loading the model');
   showProgress('indeterminate');
+}
+
+// Phones and tablets (LOW_MEMORY): one big model on the GPU at a time. WebKit gives a worker's GPU
+// memory back only when the worker ends (freed buffers stay held while the bind groups that used
+// them wait for garbage collection), so models don't unload, their workers end: the speech
+// model's while Whisper or the voice encoder runs (encoder-worker.js), and it starts again for
+// the next generation. These phases take turns (onGpu).
+let gpuTurn = Promise.resolve();
+function onGpu(fn) {
+  const p = gpuTurn.then(fn);
+  gpuTurn = p.catch(() => {});
+  return p;
+}
+
+let speechParked = null; // Promise: the speech model's worker stopping or stopped (initWorker clears it)
+let onModelReleased = null;
+function parkSpeech() {
+  if (!LOW_MEMORY || !isReady) return Promise.resolve();
+  speechParked ??= new Promise((resolve) => {
+    // the worker answers once its current job is done
+    onModelReleased = () => {
+      try { ttsWorker.terminate(); } catch { /* already dead */ }
+      resolve();
+    };
+    ttsWorker.postMessage({ type: 'release-model' });
+  });
+  return speechParked;
+}
+
+// The speech model's worker again if it was stopped; false if it couldn't start
+let onSpeechReady = null;
+async function resumeSpeech() {
+  if (!speechParked) return true;
+  await speechParked;
+  return new Promise((resolve) => { initWorker(); onSpeechReady = resolve; });
 }
 
 let modelBaseUrlPromise = null;
@@ -832,16 +1459,18 @@ let modelBaseUrlPromise = null;
 function resolveModelBaseUrl() {
   if (!modelBaseUrlPromise) {
     modelBaseUrlPromise = (async () => {
-      if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return MODEL_BASE_URL;
+      // Anywhere but the official site (local development, self-hosting): a complete models/
+      // mirror next to the app (scripts/fetch-models.sh) is used instead of Hugging Face
+      if (location.hostname.endsWith('.github.io')) return MODEL_BASE_URL;
+      let local;
       try {
         // The fetch script writes the manifest last, so its presence means the mirror is complete
-        const r = await fetch(`${LOCAL_MODEL_URL}/omnivoice-main-manifest.json`, { method: 'HEAD' });
-        if (r.ok) {
-          console.log(`[init] Using local model mirror: ${LOCAL_MODEL_URL}`);
-          return LOCAL_MODEL_URL;
-        }
-      } catch { /* no mirror */ }
-      return MODEL_BASE_URL;
+        local = (await fetch(`${LOCAL_MODEL_URL}/omnivoice-main-manifest.json`, { method: 'HEAD' })).ok;
+        localStorage.setItem('vocoloco-local-mirror', local ? '1' : '');
+      } catch { // offline: as last time (the models stored come from there)
+        local = localStorage.getItem('vocoloco-local-mirror') === '1';
+      }
+      return local ? LOCAL_MODEL_URL : MODEL_BASE_URL;
     })();
   }
   return modelBaseUrlPromise;
@@ -909,7 +1538,7 @@ function buildId3v2Tag() {
     ['TDRC', new Date().toISOString()],
   ];
   // COMM frame (comment) has special structure
-  const comment = 'AI-generated synthetic speech. This audio was produced entirely by an artificial intelligence text-to-speech model. EU AI Act Art. 50 — not a recording of a human voice.';
+  const comment = 'AI-generated synthetic speech. This audio was produced entirely by an artificial intelligence text-to-speech model. EU AI Act Art. 50: not a recording of a human voice.';
 
   // Calculate total size
   let framesSize = 0;
@@ -1000,8 +1629,23 @@ function mp3Filename(text, timestamp) {
   return `${words}_${ts}.mp3`;
 }
 
+// Encoding blocks the page for a moment (seconds for long audio on a phone): the button says so
+// first, after one painted frame (still within the tap, which the download needs)
+async function saveMp3(btn, pcm, sampleRate, filename) {
+  const label = btn.textContent;
+  btn.textContent = 'Saving…';
+  btn.disabled = true;
+  await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+  try {
+    downloadMp3(pcm, sampleRate, filename);
+  } finally {
+    btn.textContent = label;
+    btn.disabled = false;
+  }
+}
+
 downloadBtn.addEventListener('click', () => {
-  if (lastPcm) downloadMp3(lastPcm, lastSampleRate, mp3Filename(lastText));
+  if (lastPcm) saveMp3(downloadBtn, lastPcm, lastSampleRate, mp3Filename(lastText));
 });
 
 // Save part of the last generation as a reusable voice — opens the wizard's
@@ -1118,7 +1762,7 @@ function renderLibrary() {
       setStatus(`Replaying ${item.duration.toFixed(1)}s`);
     });
     info.querySelector('[data-action="download"]').addEventListener('click', () => {
-      downloadMp3(item.pcm, item.sampleRate, mp3Filename(item.text, item.timestamp));
+      saveMp3(info.querySelector('[data-action="download"]'), item.pcm, item.sampleRate, mp3Filename(item.text, item.timestamp));
     });
     info.querySelector('[data-action="use-text"]').addEventListener('click', () => {
       textEl.value = item.text.replace(/ …$/, '');
@@ -1216,9 +1860,11 @@ async function generate() {
     if (!proceed || isGenerating) return;
   }
 
-  const chunks = chunkText(text);
+  // A cloned voice's own pace sizes the parts (text-chunker.js)
+  const paceVoice = selectedSavedVoice?.tokens ? selectedSavedVoice : null;
+  const chunks = chunkText(text, paceVoice ? { refText: paceVoice.refText, refTokens: paceVoice.tokens.length / 8 } : {});
   if (chunks.length === 0) {
-    toast('Nothing to speak — the text contains no readable characters.', { type: 'error' });
+    toast('Nothing to speak: the text contains no readable characters.', { type: 'error' });
     return;
   }
 
@@ -1229,6 +1875,7 @@ async function generate() {
   lockVoiceControls(true);
   player.dimPrevious();
   setStatus('Preparing…');
+  setActivity('Generating');
   showProgress('indeterminate');
 
   const voice = selectedSavedVoice;
@@ -1249,12 +1896,14 @@ async function generate() {
     emaMsPerToken: null,
   };
 
+
   // Resolve the voice reference ONCE for the whole stream
-  const ref = { refTokens: null, refText: null, refRateTokens: null, instruct: null };
+  const ref = { refTokens: null, refText: null, refRateTokens: null, refInfo: null, instruct: null };
   try {
     if (voice) {
       ref.refText = voice.refText;
-      if (voice.tokens && !needsRefPrep(voice)) {
+      // Older reference prep: re-analyze only if the encoder is already here
+      if (voice.tokens && (!needsRefPrep(voice) || !canEncodeSilently())) {
         ref.refTokens = voice.tokens;
       } else if (encoderAvailable) {
         setStatus('Encoding reference voice… (one-time per voice)');
@@ -1264,9 +1913,10 @@ async function generate() {
       } else if (voice.tokens) {
         ref.refTokens = voice.tokens; // older reference prep, but no encoder on this device
       } else {
-        toast(`"${voice.name}" isn't set up on this device (voice encoder unavailable) — generating with a default voice instead.`, { type: 'error', duration: 6000 });
+        toast(`"${voice.name}" isn't set up on this device (voice encoder unavailable). Generating with a default voice instead.`, { type: 'error', duration: 6000 });
         ref.refText = null;
       }
+      if (ref.refTokens) ref.refInfo = voice.refInfo ?? null; // the worker checks its key
     } else if (voiceLocked && sessionChainRef) {
       ref.refTokens = sessionChainRef.tokens;
       ref.refText = sessionChainRef.text;
@@ -1275,7 +1925,9 @@ async function generate() {
       ref.instruct = buildInstruct();
     }
   } catch (err) {
-    toast('Could not prepare the voice: ' + err.message, { type: 'error' });
+    toast(err.code === 'encoder-declined'
+      ? `"${voice.name}" needs the voice encoder download first.`
+      : 'Could not prepare the voice: ' + err.message, { type: 'error' });
     finishStream();
     return;
   }
@@ -1283,7 +1935,7 @@ async function generate() {
 
   if (backendIsCpu && !cpuHintShown) {
     cpuHintShown = true;
-    toast('CPU mode: generation is much slower — the first audio can take several minutes.', { duration: 8000 });
+    toast('CPU mode is much slower. The first audio can take several minutes.', { duration: 8000 });
   }
 
   await runStream(ref);
@@ -1321,12 +1973,17 @@ function buildChunkMsg(i, ref) {
     seed: null,
     instruct: null,
     normalize: false,
+    // Natural silence kept around the speech: more at the start and end of the whole
+    // text (100 ms there sounded cut off), joins get joinPauseSeconds on top
+    leadMs: i === 0 ? EDGE_LEAD_MS : 100,
+    trailMs: i === s.chunks.length - 1 ? EDGE_TRAIL_MS : 100,
   };
   if (ref.refTokens) {
     // Cloned / locked voice: same reference for every chunk
     msg.refTokens = new Int32Array(ref.refTokens); // copy — cached buffer must survive transfer
     msg.refText = ref.refText;
     msg.refRateTokens = ref.refRateTokens; // locked voice: chunk 1 count without headroom
+    msg.refInfo = ref.refInfo ?? null;
   } else if (i === 0) {
     // Design mode, first chunk: let the model pick a voice, capture its tokens
     msg.instruct = ref.instruct;
@@ -1349,9 +2006,12 @@ function buildChunkMsg(i, ref) {
 // Silence between chunks. Pauses after a full stop inside generated chunks
 // measure ~0.4-0.75 s (each chunk also keeps up to 100 ms of its own
 // lead/tail); a chunk split mid-sentence only gets a comma-length pause.
+// Drawn from a range: people don't pause the same every time.
 function joinPauseSeconds(prevText) {
-  return /[.!?…。！？]["'”’)\]]*$/.test(prevText.trim()) ? 0.4 : 0.15;
+  const [lo, hi] = /[.!?…。！？]["'”’)\]]*$/.test(prevText.trim()) ? [0.3, 0.6] : [0.1, 0.25];
+  return lo + Math.random() * (hi - lo);
 }
+const EDGE_LEAD_MS = 200, EDGE_TRAIL_MS = 400; // silence kept before / after the whole text
 
 function onChunkAudio(i, res) {
   const s = stream;
@@ -1363,16 +2023,10 @@ function onChunkAudio(i, res) {
   if (res.peak > 1e-6 && res.peak * g > 0.98) g = 0.98 / res.peak;
   if (g !== 1) for (let k = 0; k < pcm.length; k++) pcm[k] *= g;
 
-  if (i === 0) {
-    if (currentView !== 'studio') switchView('studio');
-    player.beginStream({ estTotalSamples: Math.round((s.totalTokens / s.tempo / 25) * 24000) });
-    if (res.tokens) {
-      // rateTokens: without the worker's headroom, for the following chunks' estimate
-      s.chainRef = { tokens: res.tokens, tokenCount: res.tokenCount, rateTokens: res.rateTokens, text: s.chunks[0].text };
-    }
-    enablePlayerControls();
+  if (i === 0 && res.tokens) {
+    // rateTokens: without the worker's headroom, for the following chunks' estimate
+    s.chainRef = { tokens: res.tokens, tokenCount: res.tokenCount, rateTokens: res.rateTokens, text: s.chunks[0].text };
   }
-  player.appendChunk(pcm, i > 0 ? joinPauseSeconds(s.chunks[i - 1].text) : 0);
   s.results.push({ text: s.chunks[i].text, pcm });
   s.doneTokens += s.chunks[i].estTokens;
 }
@@ -1383,7 +2037,21 @@ function finishStream() {
 
   if (s && s.results.length > 0) {
     const partial = s.cancelRequested && s.results.length < s.chunks.length;
-    const combined = player.endStream();
+    // Every part is generated before anything plays (streaming the parts as they came felt choppy).
+    // [pause] tags (text-chunker.js) ask for exact silences, less what the parts keep at their edges.
+    const silence = (sec) => new Float32Array(Math.round(Math.max(0, sec) * 24000));
+    const gap = (c) => (c.pauseAfter != null ? c.pauseAfter - 0.2 : joinPauseSeconds(c.text));
+    const parts = [];
+    if (s.chunks[0].pauseBefore) parts.push(silence(s.chunks[0].pauseBefore - EDGE_LEAD_MS / 1000));
+    s.results.forEach((r, i) => { if (i > 0) parts.push(silence(gap(s.chunks[i - 1]))); parts.push(r.pcm); });
+    const lastChunk = s.chunks[s.chunks.length - 1];
+    if (!partial && lastChunk.pauseAfter) parts.push(silence(lastChunk.pauseAfter - EDGE_TRAIL_MS / 1000));
+    const combined = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
+    parts.reduce((o, p) => { combined.set(p, o); return o + p.length; }, 0);
+    if (currentView !== 'studio') switchView('studio');
+    player.undim();
+    player.loadStatic(combined);
+    if (!s.cancelRequested) player.play(0);
     lastPcm = combined;
     lastSampleRate = 24000;
     lastText = s.results.map(r => r.text).join(' ') + (partial ? ' …' : '');
@@ -1403,7 +2071,7 @@ function finishStream() {
       sessionChainRef = { ...s.chainRef, pcm: s.results[0].pcm };
     }
     setStatus(partial
-      ? `Stopped — kept ${s.results.length} of ${s.chunks.length} parts`
+      ? `Stopped: kept ${s.results.length} of ${s.chunks.length} parts`
       : `Playing ${duration.toFixed(1)}s`);
   } else if (s) {
     player.undim();
@@ -1420,8 +2088,9 @@ function finishStream() {
 }
 
 function onGenProgress(msg) {
+  activityLabel = 'Generating'; // also after the model was loaded for this generation
   if (!stream) {
-    setStatus(`Generating — step ${msg.step}/${msg.numStep}`);
+    setStatus(`Generating step ${msg.step}/${msg.numStep}`);
     setProgressPercent((msg.step / msg.numStep) * 100);
     return;
   }
@@ -1442,10 +2111,9 @@ function onGenProgress(msg) {
     : '';
 
   if (s.chunks.length > 1) {
-    const prefix = s.results.length > 0 ? 'Playing · generating' : 'Generating';
-    setStatus(`${prefix} part ${idx + 1} of ${s.chunks.length} — step ${msg.step}/${msg.numStep}${etaStr}`);
+    setStatus(`Generating part ${idx + 1} of ${s.chunks.length} · step ${msg.step}/${msg.numStep}${etaStr}`);
   } else {
-    setStatus(`Generating — step ${msg.step}/${msg.numStep}${etaStr}`);
+    setStatus(`Generating step ${msg.step}/${msg.numStep}${etaStr}`);
   }
 }
 
@@ -1476,15 +2144,18 @@ function hardKillWorker() {
   try { ttsWorker.terminate(); } catch { /* already dead */ }
   isReady = false;
   resolveJob({ kind: 'cancelled' });
-  setStatus('Cancelled — restarting engine…');
+  setStatus('Cancelled, restarting engine…');
   initWorker();
 }
 
 generateBtn.addEventListener('click', generate);
 
-// Enter generates (Shift+Enter = newline, Ctrl/Cmd+Enter also generates)
+// Enter generates (Shift+Enter = newline, Ctrl/Cmd+Enter also generates).
+// Touch screens: Return is a new line like in any app (phone keyboards have
+// no Shift+Enter), the Generate button sits in thumb reach instead.
+const TOUCH_KEYBOARD = matchMedia('(pointer: coarse)');
 textEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || !e.shiftKey)) {
+  if (e.key === 'Enter' && !e.isComposing && (e.ctrlKey || e.metaKey || (!e.shiftKey && !TOUCH_KEYBOARD.matches))) {
     e.preventDefault();
     generate();
   }
@@ -1494,12 +2165,14 @@ textEl.addEventListener('keydown', (e) => {
 
 async function testVoice(voice, btn) {
   if (!isReady || isGenerating || !voice) return;
+  player.getAudioCtx(); // unlock audio within the tap: iOS plays nothing that starts after the wait
   const text = TEST_SENTENCES[voice.lang] || TEST_SENTENCES.en;
   isGenerating = true;
   setGenerating(true);
   const orig = btn ? btn.textContent : null;
-  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  if (btn) { btn.disabled = true; btn.classList.add('btn-busy'); busyBtn = btn; }
   setStatus('Testing voice…');
+  setActivity('Starting');
   showProgress('indeterminate');
 
   const msg = {
@@ -1507,7 +2180,7 @@ async function testVoice(voice, btn) {
     jobId: 'test-' + Date.now(),
     text,
     lang: null,
-    numStep: 8, // fast — this is a preview
+    numStep: 16, // "Good": fewer steps often missed the voice
     ...GEN_PARAMS,
     speed: 1.0,
     tempo: currentSpeed(),
@@ -1516,19 +2189,23 @@ async function testVoice(voice, btn) {
     refText: voice.refText,
     normalize: true,
     denoise: false, // see buildChunkMsg
+    leadMs: EDGE_LEAD_MS, trailMs: EDGE_TRAIL_MS,
   };
-  if (voice.tokens) msg.refTokens = new Int32Array(voice.tokens);
+  // Phones encode in a worker of their own (encodeAlone): the speech model's worker has no room for it
+  if (!voice.tokens && LOW_MEMORY && encoderAvailable) await encodeVoiceShared(voice).catch((e) => console.warn('Voice encode failed:', e.message));
+  if (voice.tokens) { msg.refTokens = new Int32Array(voice.tokens); msg.refInfo = voice.refInfo ?? null; }
   else msg.refAudio = new Float32Array(voice.refAudio);
 
   const res = await sendJob(msg);
 
   isGenerating = false;
   setGenerating(false);
+  busyBtn = null;
   hideProgress();
-  if (btn) { btn.disabled = false; btn.textContent = orig; }
+  if (btn) { btn.disabled = false; btn.classList.remove('btn-busy'); btn.style.removeProperty('--pct'); btn.textContent = orig; }
   if (res.kind === 'audio') {
     player.playOneShot(res.pcm, res.sampleRate);
-    setStatus(`Voice test — ${(res.pcm.length / res.sampleRate).toFixed(1)}s`);
+    setStatus(`Voice test: ${(res.pcm.length / res.sampleRate).toFixed(1)}s`);
   } else if (res.kind === 'error') {
     toast('Test failed: ' + String(res.message).split('\n')[0], { type: 'error' });
     setStatus('Ready');
@@ -1648,6 +2325,7 @@ function buildVoiceCard(v) {
   // Inline rename
   renameBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (nameSpan.parentNode !== header) return; // already renaming (a second tap)
     const input = document.createElement('input');
     input.className = 'voice-name-input';
     input.value = v.name;
@@ -1732,15 +2410,15 @@ onActivate(manageVoicesLink, () => switchView('voices'));
 // ─── Voice wizard ───────────────────────────────────────────────────────────
 
 const wiz = {
-  step: null,           // 'method' | 'script' | 'record' | 'upload' | 'review' | 'saving' | 'done'
+  step: null,           // 'method' | 'record' | 'upload' | 'review' | 'saving' | 'done'
   method: null,
   source: null,         // 'recorded' | 'uploaded' | 'generated'
-  scriptId: null,
   lang: null,
-  scriptText: '',
   deviceId: null,
   stream: null, micCtx: null, srcNode: null, analyser: null, raf: 0,
   recorder: null, chunks: [], recStartTs: 0, recording: false, counting: false,
+  stopLocked: false,    // recording, but shorter than MIN_REF_S
+  note: null,           // why the last take was not used
   levelRing: new Float32Array(100),
   sourcePcm: null,      // the full recording / upload / generation
   sel: null,            // { start, end } in samples — the part used as the voice
@@ -1750,6 +2428,7 @@ const wiz = {
 };
 
 const MAX_SOURCE_S = 1800; // longer files: only the first 30 minutes are kept
+const MIN_REF_S = 3;      // shortest usable reference; shorter ones don't carry the voice
 const MAX_REF_S = 30;     // longest selectable reference: it runs through every generation step,
                           // so longer references make generation slower
 const DEFAULT_REF_S = 15; // the automatic selection keeps the faster length
@@ -1758,7 +2437,7 @@ const trimEditor = wizReviewWave ? new TrimEditor({
   canvas: wizReviewWave,
   overviewCanvas: wizTrimOverview,
   sampleRate: 24000,
-  minS: 3,
+  minS: MIN_REF_S,
   maxS: MAX_REF_S,
   onChange: (sel, { final }) => onTrimChange(sel, final),
 }) : null;
@@ -1768,16 +2447,17 @@ function fmtClock(s) {
 }
 
 // New source audio for the review step; the selection defaults to the best
-// <= DEFAULT_REF_S of speech (or `presetSel`, e.g. chunk 1 of a generation).
-function wizSetSource(pcm, presetSel = null) {
+// <= DEFAULT_REF_S of speech (or `presetSel`, e.g. chunk 1 of a generation;
+// or `sel`, a default selection computed already).
+function wizSetSource(pcm, presetSel = null, sel = null) {
   const cap = MAX_SOURCE_S * 24000;
   if (pcm.length > cap) {
     pcm = pcm.slice(0, cap);
-    toast('This file is longer than 30 minutes — only the first 30 minutes were loaded.');
+    toast('This file is longer than 30 minutes. Only the first 30 minutes were loaded.');
   }
   wiz.sourcePcm = pcm;
   wiz.presetSel = presetSel;
-  wiz.sel = presetSel || defaultSelection(pcm, 24000, { minS: 3, maxS: DEFAULT_REF_S });
+  wiz.sel = presetSel || sel || defaultSelection(pcm, 24000, { minS: MIN_REF_S, maxS: DEFAULT_REF_S });
   wiz.pcm = pcm.slice(wiz.sel.start, wiz.sel.end);
   wiz.duration = wiz.pcm.length / 24000;
 }
@@ -1796,7 +2476,7 @@ function updateTrimInfo() {
   if (!wizTrimInfo || !wiz.sel || !wiz.sourcePcm) return;
   const total = wiz.sourcePcm.length / 24000;
   const range = `${fmtClock(wiz.sel.start / 24000)} – ${fmtClock(wiz.sel.end / 24000)} of ${fmtClock(total)}`;
-  wizTrimInfo.textContent = `${range} · Drag the green handles or the window to choose the part to clone (3–${MAX_REF_S} s)`;
+  wizTrimInfo.textContent = `${range} · Drag the green handles or the window to choose the part to clone (${MIN_REF_S}–${MAX_REF_S} s)`;
   updateTranscriptHint();
 }
 
@@ -1806,10 +2486,10 @@ function updateTranscriptHint() {
   if (asr.error) {
     wizTranscriptHint.textContent = asr.error;
   } else if (asrStale()) {
-    wizTranscriptHint.textContent = 'The selection changed since it was transcribed — transcribe the new selection, or edit the text to match it.';
+    wizTranscriptHint.textContent = 'The selection changed since it was transcribed. Transcribe it again or edit the text to match.';
   } else if (asr.autoText != null && wizTranscript.value === asr.autoText) {
     const lang = languageName(asr.lang);
-    wizTranscriptHint.textContent = `Transcribed automatically${lang ? ` (${lang})` : ''} — check that it matches the selected part word for word.`;
+    wizTranscriptHint.textContent = `Transcribed automatically${lang ? ` (${lang})` : ''}. Check that it matches the selected part word for word.`;
   } else if (trimEditor && wiz.sourcePcm && !atPreset && trimEditor.cutsSpeech()) {
     wizTranscriptHint.textContent = 'You trimmed the clip: the transcript must contain exactly the words spoken in the selected part.';
   } else {
@@ -1818,11 +2498,9 @@ function updateTranscriptHint() {
 }
 
 function defaultTranscriptHint() {
-  return wiz.source === 'recorded'
-    ? 'Pre-filled from your script. Fix any words you changed while reading.'
-    : wiz.source === 'uploaded'
-      ? 'Type the exact words spoken in the selected part, or transcribe them automatically — an exact transcript noticeably improves cloning.'
-      : 'Pre-filled with the generated text.';
+  return wiz.source === 'generated'
+    ? 'Pre-filled with the generated text.'
+    : 'Type the exact words spoken in the selected part, or transcribe them automatically. An exact transcript noticeably improves cloning.';
 }
 
 
@@ -1831,31 +2509,17 @@ function defaultTranscriptHint() {
 // to transcribe references. The worker starts on first use and is stopped
 // when the wizard closes, so its GPU memory is only held while it's useful.
 
-const ASR_CACHED_KEY = 'vocoloco-asr-cached'; // model downloaded before
+const ASR_CACHED_KEY = 'vocoloco-asr-engine-cached'; // model downloaded before
+const ASR_SIZE = '0.9 GB';
 const asr = {
   worker: null, nextId: 0, pending: new Map(),
   busy: false, phase: null, pct: null,
   autoText: null, sel: null, lang: null, error: null, // sel: the selection autoText is for
 };
 
-let asrHostPromise = null;
-function resolveAsrHost() {
-  asrHostPromise ??= (async () => {
-    // Local dev mirror (scripts/fetch-models.sh writes config.json last)
-    if (await resolveModelBaseUrl() === LOCAL_MODEL_URL) {
-      try {
-        const r = await fetch(`${LOCAL_MODEL_URL}/onnx-community/whisper-large-v3-turbo/config.json`, { method: 'HEAD' });
-        if (r.ok) return `${LOCAL_MODEL_URL}/`;
-      } catch { /* no mirror */ }
-    }
-    return 'https://huggingface.co/';
-  })();
-  return asrHostPromise;
-}
-
 function asrWorker() {
   if (asr.worker) return asr.worker;
-  const w = new Worker('workers/asr-worker.js?v=2', { type: 'module' });
+  const w = new Worker('workers/asr-worker.js?v=5', { type: 'module' });
   w.onmessage = (e) => {
     const m = e.data;
     if (m.type === 'progress') {
@@ -1899,13 +2563,26 @@ async function resample16k(pcm24) {
   return new Float32Array((await ctx.startRendering()).getChannelData(0));
 }
 
+// Phones: Whisper runs alone, the speech model's worker is stopped meanwhile (parkSpeech), and
+// Whisper's is ended right after, before anything else needs the memory. Elsewhere its weights
+// stay on the GPU while the wizard is open.
 async function requestTranscript(pcm24) {
-  const [host, pcm] = await Promise.all([resolveAsrHost(), resample16k(pcm24)]);
-  const id = ++asr.nextId;
-  return new Promise((resolve, reject) => {
-    asr.pending.set(id, { resolve, reject });
-    asrWorker().postMessage({ type: 'transcribe', id, pcm, host }, [pcm.buffer]);
-  });
+  const [base, pcm] = await Promise.all([resolveModelBaseUrl(), resample16k(pcm24)]);
+  const run = () => {
+    const id = ++asr.nextId;
+    setBusy('transcribe', true);
+    setActivity('Transcribing');
+    showProgress('indeterminate');
+    return new Promise((resolve, reject) => {
+      asr.pending.set(id, { resolve, reject });
+      asrWorker().postMessage({ type: 'transcribe', id, pcm, base, resident: !LOW_MEMORY }, [pcm.buffer]);
+    }).finally(() => {
+      setBusy('transcribe', false);
+      if (!isGenerating) hideProgress();
+      if (LOW_MEMORY) stopAsr();
+    });
+  };
+  return LOW_MEMORY ? onGpu(() => parkSpeech().then(run)) : run();
 }
 
 function languageName(code) {
@@ -1913,21 +2590,30 @@ function languageName(code) {
   try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code); } catch { return code; }
 }
 
-function asrSupported() { return !!navigator.gpu; }
+function asrOff() { return LOW_MEMORY && localStorage.getItem(ASR_OFF_KEY) === '1'; } // see closedWhile
+function asrSupported() { return !!navigator.gpu && !asrOff(); }
+
+const ASR_BUSY_LABELS = ['Downloading 100%', 'Loading…', 'Transcribing…', 'Transcribe again'];
 
 function updateAsrButton() {
   if (!wizAsrBtn) return;
   const cached = localStorage.getItem(ASR_CACHED_KEY) === '1';
+  const idle = !asrSupported() ? (asrOff() ? 'Off: low memory' : 'Needs WebGPU')
+    : cached ? 'Transcribe' : `Transcribe · ${ASR_SIZE}`;
   let label;
-  if (!asrSupported()) label = 'Automatic transcription needs WebGPU';
-  else if (!asr.busy) label = asrStale() ? 'Transcribe the new selection' : cached ? 'Transcribe automatically' : 'Transcribe automatically · 0.5 GB download';
-  else if (asr.phase === 'download' && asr.pct != null) label = `Downloading speech model… ${asr.pct}%`;
-  else if (asr.phase === 'download' || asr.phase === 'compile') label = 'Loading speech model…';
+  if (!asr.busy) label = asrSupported() && asrStale() ? 'Transcribe again' : idle;
+  else if (asr.phase === 'download' && asr.pct != null) label = `Downloading ${asr.pct}%`;
+  else if (asr.phase === 'download' || asr.phase === 'compile') label = 'Loading…';
   else label = 'Transcribing…';
   wizAsrLabel.textContent = label;
+  // Every label it can show stays reserved (invisible), so the button keeps one
+  // size through download, transcription and back. Reset per review visit.
+  if (wizAsrReserve && !wizAsrReserve.textContent) wizAsrReserve.textContent = [idle, ...ASR_BUSY_LABELS].join('\n');
   wizAsrBtn.disabled = !asrSupported() || asr.busy || !wiz.pcm;
   wizAsrBtn.classList.toggle('busy', asr.busy);
-  wizAsrBtn.title = cached ? '' : 'Downloads the Whisper speech recognition model once (~0.5 GB); it runs on your device';
+  // the download's progress fills the button from the left
+  wizAsrBtn.style.setProperty('--asr-pct', asr.busy && asr.phase === 'download' && asr.pct != null ? `${asr.pct}%` : '0%');
+  wizAsrBtn.title = cached ? '' : `Downloads the Whisper speech recognition model once (${ASR_SIZE}); it runs on your device`;
 }
 
 // The automatic transcript no longer matches the selection (moved since)
@@ -1939,6 +2625,7 @@ function asrStale() {
 // Only on request: the user picks the part first, then transcribes it
 async function runAutoTranscribe() {
   if (!asrSupported() || !wiz.pcm || asr.busy) return;
+  keepStorage();
   asr.busy = true;
   asr.error = null;
   asr.phase = asr.worker ? 'transcribe' : 'download';
@@ -1956,8 +2643,8 @@ async function runAutoTranscribe() {
   } catch (e) {
     if (e.code === 'stopped') return;
     asr.error = e.code === 'no-webgpu'
-      ? 'Automatic transcription needs WebGPU — type the transcript instead.'
-      : `Automatic transcription failed (${e.message}) — type the transcript instead.`;
+      ? 'Automatic transcription needs WebGPU. Type the transcript instead.'
+      : `Automatic transcription failed (${e.message}). Type the transcript instead.`;
   } finally {
     asr.busy = false;
     asr.phase = null;
@@ -2002,7 +2689,6 @@ window.addEventListener('resize', () => {
 
 const WIZ_TITLES = {
   method: 'New voice',
-  script: 'Pick a script',
   record: 'Record your voice',
   upload: 'Upload audio',
   review: 'Review & save',
@@ -2018,9 +2704,7 @@ function wizReset() {
   wiz.step = null;
   wiz.method = null;
   wiz.source = null;
-  wiz.scriptId = null;
   wiz.lang = null;
-  wiz.scriptText = '';
   stopReviewPreview();
   wiz.sourcePcm = null;
   wiz.sel = null;
@@ -2033,14 +2717,13 @@ function wizReset() {
   wiz.levelRing.fill(0);
   if (wizTranscript) wizTranscript.value = '';
   if (wizVoiceName) wizVoiceName.value = '';
-  if (wizCustomText) wizCustomText.value = '';
-  if (wizCustomWrap) wizCustomWrap.classList.add('hidden');
-  if (wizUploadError) wizUploadError.classList.add('hidden');
-  if (wizSaveBlocker) wizSaveBlocker.classList.add('hidden');
+  showUploadError('');
+  showSaveBlocker(null);
   if (wizSaveBtn) wizSaveBtn.disabled = false;
 }
 
-function openVoiceWizard(startStep = 'method', preset = null) {
+async function openVoiceWizard(startStep = 'method', preset = null) {
+  if (!await ensureCloning()) return; // its models first, all at once
   wizStopMedia();
   wizReset();
   if (preset) {
@@ -2052,9 +2735,15 @@ function openVoiceWizard(startStep = 'method', preset = null) {
   }
   if (voicesHome) voicesHome.style.display = 'none';
   if (voiceWizard) voiceWizard.style.display = 'flex';
-  // Fetch the voice encoder while the user records / picks audio
-  if (isReady && encoderAvailable) ttsWorker.postMessage({ type: 'prefetch-encoder' });
   wizGoto(startStep);
+  // ONNX Runtime (no engine): fetch its voice encoder while the user records or picks audio. A new
+  // voice asks for the download right away; a generation saved as a voice may reuse its tokens, so
+  // it only asks when saving needs the encoder.
+  if (isReady && encoderAvailable && !engineBackend()) {
+    const prefetch = () => ttsWorker.postMessage({ type: 'prefetch-encoder' });
+    if (canEncodeSilently()) prefetch();
+    else if (!preset) confirmEncoderDownload().then((ok) => { if (ok) prefetch(); });
+  }
 }
 
 function closeVoiceWizard() {
@@ -2076,8 +2765,8 @@ function wizGoto(step) {
   if (wizBackBtn) wizBackBtn.style.visibility = step === 'saving' ? 'hidden' : 'visible';
   if (wizCloseBtn) wizCloseBtn.style.visibility = step === 'saving' ? 'hidden' : 'visible';
 
-  if (step === 'script') renderScriptList();
   if (step === 'record') startMicCheck(wiz.deviceId || undefined);
+  if (step === 'upload') showUploadError('');
   if (step === 'review') {
     requestAnimationFrame(() => {
       if (wiz.sourcePcm && trimEditor) trimEditor.load(wiz.sourcePcm, wiz.sel);
@@ -2087,8 +2776,10 @@ function wizGoto(step) {
       : wiz.source === 'uploaded' ? '← Choose another file'
       : 'Cancel';
     updateTranscriptHint();
+    if (wizAsrReserve) wizAsrReserve.textContent = ''; // sized again for this visit
     updateAsrButton();
-    if (!wizVoiceName.value) wizVoiceName.focus({ preventScroll: true });
+    // Not on touch screens: the keyboard would pop up over the trim editor
+    if (!wizVoiceName.value && !TOUCH_KEYBOARD.matches) wizVoiceName.focus({ preventScroll: true });
   } else {
     stopReviewPreview();
   }
@@ -2097,8 +2788,7 @@ function wizGoto(step) {
 function wizBack() {
   switch (wiz.step) {
     case 'method': closeVoiceWizard(); break;
-    case 'script': wizGoto('method'); break;
-    case 'record': wizGoto('script'); break;
+    case 'record': wizGoto('method'); break;
     case 'upload': wizGoto('method'); break;
     case 'review':
       if (wiz.source === 'recorded') wizGoto('record');
@@ -2115,79 +2805,8 @@ if (wizCloseBtn) wizCloseBtn.addEventListener('click', closeVoiceWizard);
 if (wizReviewBack) wizReviewBack.addEventListener('click', wizBack);
 if (newVoiceBtn) newVoiceBtn.addEventListener('click', () => openVoiceWizard('method'));
 if (voicesEmptyCta) voicesEmptyCta.addEventListener('click', () => openVoiceWizard('method'));
-onActivate(wizMethodRecord, () => { wiz.method = 'record'; wizGoto('script'); });
+onActivate(wizMethodRecord, () => { wiz.method = 'record'; wizGoto('record'); });
 onActivate(wizMethodUpload, () => { wiz.method = 'upload'; wizGoto('upload'); });
-
-// ── Script picker ──
-
-function renderScriptList() {
-  if (!wizScriptList) return;
-  wizScriptList.innerHTML = '';
-  const mkCard = (id, label, langTag, preview) => {
-    const card = document.createElement('div');
-    card.className = 'script-card' + (wiz.scriptId === id ? ' selected' : '');
-    card.dataset.scriptId = id;
-    card.setAttribute('role', 'button');
-    card.tabIndex = 0;
-    const head = document.createElement('div');
-    head.className = 'sc-head';
-    const title = document.createElement('span');
-    title.textContent = label;
-    head.appendChild(title);
-    if (langTag) {
-      const lt = document.createElement('span');
-      lt.className = 'sc-lang';
-      lt.textContent = langTag;
-      head.appendChild(lt);
-    }
-    const prev = document.createElement('div');
-    prev.className = 'sc-preview';
-    prev.textContent = preview;
-    card.append(head, prev);
-    const select = () => selectScript(id);
-    card.addEventListener('click', select);
-    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(); } });
-    return card;
-  };
-  for (const s of VOICE_SCRIPTS) wizScriptList.appendChild(mkCard(s.id, s.label, s.lang.toUpperCase(), s.text));
-  wizScriptList.appendChild(mkCard('custom', 'Use your own text', null, 'Write 2-3 sentences and read them aloud.'));
-  updateScriptNext();
-}
-
-function selectScript(id) {
-  wiz.scriptId = id;
-  const script = VOICE_SCRIPTS.find(x => x.id === id);
-  wiz.lang = script ? script.lang : null;
-  wiz.scriptText = script ? script.text : wizCustomText.value.trim();
-  wizCustomWrap.classList.toggle('hidden', id !== 'custom');
-  document.querySelectorAll('#wiz-script-list .script-card').forEach(c => {
-    c.classList.toggle('selected', c.dataset.scriptId === id);
-  });
-  updateScriptNext();
-  if (id === 'custom') wizCustomText.focus({ preventScroll: true });
-}
-
-function updateScriptNext() {
-  if (!wizScriptNext) return;
-  wizScriptNext.disabled = !(wiz.scriptId && (wiz.scriptId !== 'custom' || wiz.scriptText.length >= 20));
-}
-
-if (wizCustomText) {
-  wizCustomText.addEventListener('input', () => {
-    if (wiz.scriptId === 'custom') {
-      wiz.scriptText = wizCustomText.value.trim();
-      updateScriptNext();
-    }
-  });
-}
-
-if (wizScriptNext) {
-  wizScriptNext.addEventListener('click', () => {
-    if (wizScriptNext.disabled) return;
-    wizScriptDisplay.textContent = wiz.scriptText;
-    wizGoto('record');
-  });
-}
 
 // ── Mic check + live metering ──
 
@@ -2284,11 +2903,41 @@ if (wizMicSelect) {
 if (wizMicRetry) wizMicRetry.addEventListener('click', () => startMicCheck(wiz.deviceId || undefined));
 if (wizMicFallbackUpload) wizMicFallbackUpload.addEventListener('click', () => { wiz.method = 'upload'; wizGoto('upload'); });
 
+// Short enough for one line on a phone: the row never changes height
+const WIZ_ZONE_IDLE_LABEL = `At least ${MIN_REF_S} s · 5 to 12 s is best`;
+
 function recZoneLabel(elapsed) {
-  if (elapsed < 3) return 'Keep going — at least 3 seconds needed';
-  if (elapsed < 5) return 'Usable — a few more seconds is better';
-  if (elapsed < 12) return 'Good length — stop whenever you finish the script';
-  return `Long enough — stopping automatically at ${MAX_REF_S}s`;
+  if (elapsed < MIN_REF_S) return `Keep talking, at least ${MIN_REF_S} s`;
+  if (elapsed < 5) return 'Usable, a bit longer is better';
+  if (elapsed < 12) return 'Good length, stop anytime';
+  return `Long enough, stops at ${MAX_REF_S} s`;
+}
+
+// Counts up to the minimum first ("1.2 / 3s"), so the requirement stays visible
+function recElapsedText(elapsed) {
+  const t = (Math.floor(Math.max(0, elapsed) * 10) / 10).toFixed(1);
+  return elapsed < MIN_REF_S ? `${t} / ${MIN_REF_S}s` : `${t}s`;
+}
+
+// Stop only works from MIN_REF_S on, so a take can't end too short. aria-disabled
+// rather than disabled: the button keeps keyboard focus while it waits.
+function setRecordStopLocked(locked) {
+  wiz.stopLocked = locked;
+  if (!wizRecordBtn) return;
+  if (locked) wizRecordBtn.setAttribute('aria-disabled', 'true');
+  else wizRecordBtn.removeAttribute('aria-disabled');
+  if (wiz.recording && wizRecordLabel) {
+    wizRecordLabel.textContent = locked ? `Recording · you can stop at ${MIN_REF_S} s` : 'Recording · tap to stop';
+  }
+}
+
+// The take had too little speech: stay here, keep its length on the timer, say
+// why in the reserved status line and offer to record again
+function rejectWizTake() {
+  wiz.note = `Not enough speech. Talk for at least ${MIN_REF_S} s.`;
+  if (wizSilenceHint) wizSilenceHint.textContent = wiz.note;
+  if (wizRecZone) wizRecZone.textContent = WIZ_ZONE_IDLE_LABEL;
+  if (wizRecordLabel) wizRecordLabel.textContent = 'Tap to record again';
 }
 
 function startMeterLoop() {
@@ -2325,21 +2974,22 @@ function startMeterLoop() {
     while (silenceWindow.length && now - silenceWindow[0].t > 2200) silenceWindow.shift();
     const span = silenceWindow.length ? now - silenceWindow[0].t : 0;
     const allQuiet = span >= 2000 && silenceWindow.every(s => s.rms < 0.01);
+    // One reserved status line (no layout jump): a rejected take's note wins over
+    // the silence warning. Written only on change, so it is announced once.
     if (wizSilenceHint) {
-      wizSilenceHint.classList.toggle('hidden', !allQuiet);
-      if (allQuiet) {
-        wizSilenceHint.textContent = wiz.recording
-          ? "We can't hear you — check the microphone above or speak louder."
-          : 'No signal from this microphone. Try another one from the list above.';
-      }
+      const text = wiz.note || (!allQuiet ? ''
+        : wiz.recording ? "Can't hear you. Check the mic or speak up."
+        : 'No signal. Try another microphone above.');
+      if (wizSilenceHint.textContent !== text) wizSilenceHint.textContent = text;
     }
 
     // Recording timeline
     if (wiz.recording) {
       const elapsed = (now - wiz.recStartTs) / 1000;
-      if (wizRecElapsed) wizRecElapsed.textContent = elapsed.toFixed(1) + 's';
+      if (wizRecElapsed) wizRecElapsed.textContent = recElapsedText(elapsed);
       if (wizRecFill) wizRecFill.style.width = Math.min(100, (elapsed / 15) * 100) + '%';
       if (wizRecZone) wizRecZone.textContent = recZoneLabel(elapsed);
+      if (wiz.stopLocked && elapsed >= MIN_REF_S) setRecordStopLocked(false);
       if (elapsed >= MAX_REF_S) stopWizRecording();
     }
 
@@ -2381,7 +3031,11 @@ function drawLiveBars(canvas, ring) {
 
 if (wizRecordBtn) {
   wizRecordBtn.addEventListener('click', () => {
-    if (wiz.recording) { stopWizRecording(); return; }
+    if (wiz.recording) {
+      // Too early to stop (the button shows it): keep recording
+      if (performance.now() - wiz.recStartTs >= MIN_REF_S * 1000) stopWizRecording();
+      return;
+    }
     if (wiz.counting) { cancelWizCountdown(); return; }
     if (!wiz.stream) { startMicCheck(wiz.deviceId || undefined); return; }
     startWizCountdown();
@@ -2398,6 +3052,10 @@ function cancelWizCountdown() {
 async function startWizCountdown() {
   if (!wiz.stream) return;
   wiz.counting = true;
+  wiz.note = null; // a new take replaces the last one
+  if (wizSilenceHint) wizSilenceHint.textContent = '';
+  if (wizRecElapsed) wizRecElapsed.textContent = recElapsedText(0);
+  if (wizRecFill) wizRecFill.style.width = '0%';
   wizRecordBtn.classList.add('counting');
   wizRecordLabel.textContent = 'Starting… tap to cancel';
   for (let i = 3; i >= 1; i--) {
@@ -2438,7 +3096,7 @@ function startWizRecording() {
   wiz.recording = true;
   wizRecordBtn.classList.add('recording');
   wizRecordBtnInner.textContent = '■';
-  wizRecordLabel.textContent = 'Recording — tap to stop';
+  setRecordStopLocked(true);
   if (wizRecZone) wizRecZone.textContent = recZoneLabel(0);
 }
 
@@ -2452,6 +3110,7 @@ function stopWizRecording() {
 async function onWizRecordingStopped() {
   wiz.recording = false;
   wiz.recorder = null;
+  setRecordStopLocked(false);
   if (wizRecordBtn) {
     wizRecordBtn.classList.remove('recording');
     wizRecordBtnInner.innerHTML = wizRecordBtnIdleHTML;
@@ -2467,11 +3126,8 @@ async function onWizRecordingStopped() {
     toast("Couldn't process the recording: " + e.message, { type: 'error' });
     return;
   }
-  wiz.source = 'recorded';
-  wiz.presetTokens = null;
-  wizSetSource(pcm);
-  wizTranscript.value = wiz.scriptText || '';
-  wizGoto('review');
+  if (wiz.step !== 'record') return; // left the step while it was decoding
+  if (!wizLoadAudio(pcm, 'recorded')) rejectWizTake();
 }
 
 function wizStopMedia() {
@@ -2486,6 +3142,8 @@ function wizStopMedia() {
   wiz.recorder = null;
   wiz.chunks = [];
   wiz.recording = false;
+  wiz.note = null;
+  setRecordStopLocked(false);
   if (wiz.srcNode) { try { wiz.srcNode.disconnect(); } catch { /* detached */ } wiz.srcNode = null; }
   wiz.analyser = null;
   if (wiz.micCtx) { try { wiz.micCtx.close(); } catch { /* closed */ } wiz.micCtx = null; }
@@ -2497,10 +3155,10 @@ function wizStopMedia() {
     wizRecordBtn.classList.remove('recording', 'counting');
     if (wizRecordBtnInner) wizRecordBtnInner.innerHTML = wizRecordBtnIdleHTML;
     if (wizRecordLabel) wizRecordLabel.textContent = WIZ_RECORD_IDLE_LABEL;
-    if (wizRecElapsed) wizRecElapsed.textContent = '0.0s';
+    if (wizRecElapsed) wizRecElapsed.textContent = recElapsedText(0);
     if (wizRecFill) wizRecFill.style.width = '0%';
     if (wizRecZone) wizRecZone.textContent = WIZ_ZONE_IDLE_LABEL;
-    if (wizSilenceHint) wizSilenceHint.classList.add('hidden');
+    if (wizSilenceHint) wizSilenceHint.textContent = '';
     if (wizLevelFill) { wizLevelFill.style.width = '0%'; wizLevelFill.classList.remove('hot'); }
   }
   setMicStatus(false);
@@ -2510,16 +3168,15 @@ window.addEventListener('beforeunload', wizStopMedia);
 
 // ── Upload step ──
 
+// The element stays in the page (empty when there's nothing to say), so the
+// live region announces reliably; '' clears it
 function showUploadError(text) {
-  if (wizUploadError) {
-    wizUploadError.textContent = text;
-    wizUploadError.classList.remove('hidden');
-  }
+  if (wizUploadError) wizUploadError.textContent = text;
 }
 
 async function handleWizFile(file) {
   if (!file) return;
-  if (wizUploadError) wizUploadError.classList.add('hidden');
+  showUploadError('');
   let pcm;
   try {
     if (wizDropzone) wizDropzone.classList.add('loading');
@@ -2527,23 +3184,33 @@ async function handleWizFile(file) {
   } catch (e) {
     console.warn('Audio decode failed:', e);
     showUploadError(file.size > 200 * 1024 * 1024
-      ? "Couldn't decode this file — it may be too long for the browser to decode at once. Try a shorter excerpt or a compressed format (MP3, M4A, OGG)."
+      ? "Couldn't decode this file. It may be too long for the browser to decode at once. Try a shorter excerpt or a compressed format (MP3, M4A, OGG)."
       : "Couldn't read this file. Use MP3, WAV, M4A, OGG, or a video file with an audio track.");
     return;
   } finally {
     if (wizDropzone) wizDropzone.classList.remove('loading');
+    if (wizFileInput) wizFileInput.value = ''; // the same file can be picked again
   }
-  wiz.source = 'uploaded';
+  if (wiz.step !== 'upload') return; // left the step while it was decoding
+  if (!wizLoadAudio(pcm, 'uploaded')) showUploadError(`Too short. Use a clip with at least ${MIN_REF_S} s of speech.`);
+}
+
+// Uploads and recordings continue the same way: trim editor, transcript, save.
+// A clip with less than MIN_REF_S of speech doesn't get there: returns false
+// and changes nothing, the caller explains it on its own step.
+function wizLoadAudio(pcm, source) {
+  const sel = defaultSelection(pcm.subarray(0, MAX_SOURCE_S * 24000), 24000, { minS: MIN_REF_S, maxS: DEFAULT_REF_S });
+  if (sel.end - sel.start < MIN_REF_S * 24000) return false;
+  wiz.source = source;
   wiz.presetTokens = null;
-  wizSetSource(pcm);
-  wiz.scriptId = null;
+  wizSetSource(pcm, null, sel);
   wiz.lang = null;
   wizTranscript.value = '';
   asr.autoText = null;
   asr.sel = null;
   asr.error = null;
-  if (wizFileInput) wizFileInput.value = '';
   wizGoto('review');
+  return true;
 }
 
 if (wizDropzone) {
@@ -2565,7 +3232,14 @@ function updateReviewVerdict() {
   const d = wiz.duration || 0;
   if (wizReviewDuration) wizReviewDuration.textContent = d.toFixed(1) + 's';
   let cls, label, blocker = null;
-  if (d < 3) { cls = 'bad'; label = 'Too short'; blocker = 'Too short to clone — use at least 3 seconds of speech.'; }
+  if (d < MIN_REF_S) {
+    // Recordings and uploads never get here (wizLoadAudio) and the trim editor
+    // keeps selections >= MIN_REF_S; only a short preset or clip can
+    cls = 'bad'; label = 'Too short';
+    blocker = wiz.sourcePcm && wiz.sourcePcm.length >= MIN_REF_S * 24000
+      ? `Select at least ${MIN_REF_S} s to save.`
+      : `Too short to clone. It needs at least ${MIN_REF_S} s of speech.`;
+  }
   else if (d < 5) { cls = 'warn'; label = 'Usable'; }
   else if (d <= 12) { cls = 'good'; label = 'Good length'; }
   else { cls = 'warn'; label = 'Long · slower'; }
@@ -2573,11 +3247,16 @@ function updateReviewVerdict() {
     wizReviewVerdict.className = 'verdict-chip ' + cls;
     wizReviewVerdict.textContent = label;
   }
-  if (wizSaveBtn) wizSaveBtn.disabled = d < 3;
-  if (wizSaveBlocker) {
-    if (blocker) { wizSaveBlocker.textContent = blocker; wizSaveBlocker.classList.remove('hidden'); }
-    else wizSaveBlocker.classList.add('hidden');
-  }
+  if (wizSaveBtn) wizSaveBtn.disabled = d < MIN_REF_S;
+  showSaveBlocker(blocker);
+}
+
+// Hint under the review fields, also the Save button's description
+// (aria-describedby), so it's emptied when hidden
+function showSaveBlocker(text) {
+  if (!wizSaveBlocker) return;
+  wizSaveBlocker.textContent = text || '';
+  wizSaveBlocker.classList.toggle('hidden', !text);
 }
 
 if (wizReviewPlay) {
@@ -2590,15 +3269,26 @@ if (wizReviewPlay) {
 
 // ── Save flow (persist first, encode after — a voice can never be lost) ──
 
+// Saving step: the status line only changes with the phase (it's a live region,
+// so no announcement per progress tick); the progress sits on its own reserved,
+// tabular line below, so nothing reflows while it counts
+function setWizSavingStatus(text, progress = null) {
+  if (wizSavingStatus && wizSavingStatus.textContent !== text) wizSavingStatus.textContent = text;
+  if (wizSavingPct) {
+    wizSavingPct.textContent = progress || '';
+    wizSavingPct.style.visibility = progress ? 'visible' : 'hidden';
+  }
+}
+
 async function wizSave() {
+  // Length first: Enter in the name field reaches here even while Save is disabled
+  if (!wiz.pcm || wiz.duration < MIN_REF_S) { updateReviewVerdict(); return; }
   const name = wizVoiceName.value.trim();
   if (!name) {
-    wizSaveBlocker.textContent = 'Give the voice a name.';
-    wizSaveBlocker.classList.remove('hidden');
+    showSaveBlocker('Give the voice a name.');
     wizVoiceName.focus();
     return;
   }
-  if (!wiz.pcm || wiz.duration < 3) { updateReviewVerdict(); return; }
   wizSaveBtn.disabled = true;
   stopReviewPreview();
 
@@ -2618,12 +3308,11 @@ async function wizSave() {
     duration: refAudio.length / 24000,
     refPrep: REF_PREP_VERSION,
     createdAt: Date.now(),
-    scriptId: wiz.scriptId,
     lang: wiz.lang,
     source: wiz.source || 'recorded',
   };
 
-  wizSavingStatus.textContent = 'Saving…';
+  setWizSavingStatus('Saving…');
   wizGoto('saving');
   try {
     await saveVoice(record);
@@ -2639,15 +3328,17 @@ async function wizSave() {
   if (!record.tokens) {
     if (isReady && encoderAvailable) {
       try {
-        wizSavingStatus.textContent = 'Analyzing voice… (one-time setup)';
+        setWizSavingStatus('Analyzing voice… (one-time setup)');
         await encodeVoiceShared(record); // persists via merge, shares in-flight work
       } catch (e) {
         encodeNote = e.code === 'encoder-unavailable'
           ? 'This device could not run the voice encoder. The recording is saved and will finish setting up on a device with more memory.'
-          : 'Voice analysis failed — it will be retried automatically before the next use.';
+          : e.code === 'encoder-declined'
+            ? 'Saved. Analyzed once you allow the encoder download.'
+            : 'Voice analysis failed. It will be retried automatically before the next use.';
       }
     } else if (!isReady) {
-      encodeNote = 'Models are still loading — the voice will finish setting up automatically.';
+      encodeNote = 'Models are still loading. The voice will finish setting up automatically.';
     } else {
       encodeNote = 'The voice encoder is unavailable on this device. The recording is saved; cloning it here may be limited.';
     }
@@ -2847,7 +3538,7 @@ async function getCacheAPISize(cacheName) {
 async function calculateStorage() {
   const modelsEl = $('storage-models');
   if (!modelsEl) return;
-  const modelsSize = await getCacheAPISize('omnivoice-models-v1');
+  const modelsSize = await getCacheAPISize('omnivoice-models-v1') + await diskUsage();
   const historySize = await getDBSize(HISTORY_DB);
   const voicesSize = await getDBSize(VOICE_DB);
   modelsEl.textContent = formatBytes(modelsSize);
@@ -2865,11 +3556,19 @@ function clearDB(dbName) {
   });
 }
 
-// TTS models, the speech recognizer (+ the ONNX Runtime files transformers.js caches)
+// TTS models, the speech recognizer (+ the tokenizer files earlier versions kept via transformers.js)
 async function clearModelCaches() {
   stopAsr();
-  await Promise.all(['omnivoice-models-v1', 'vocoloco-asr-v1', 'transformers-cache'].map((n) => caches.delete(n)));
+  // The engine keeps its weight files open: stop it, so they can be deleted
+  rejectPendingEncodes('Engine restarted');
+  try { ttsWorker.terminate(); } catch { /* already dead */ }
+  isReady = false;
+  await Promise.all(['omnivoice-models-v1', 'vocoloco-tokenizer-v1', 'vocoloco-asr-v1', 'vocoloco-asr-v2', 'transformers-cache'].map((n) => caches.delete(n)));
+  await clearDisk(); // the engine's weights (model-files.js, openDiskFile)
   localStorage.removeItem(ASR_CACHED_KEY);
+  localStorage.removeItem(CLONING_KEY); // the next download asks about voice cloning again
+  encoderCached = false;
+  Object.assign(cloning, { total: 0, stored: 0, loaded: 0 });
 }
 
 const clearCacheBtn = $('clear-cache-btn');
@@ -2877,7 +3576,7 @@ if (clearCacheBtn) {
   clearCacheBtn.addEventListener('click', async () => {
     const ok = await confirmDialog({
       title: 'Clear cached models?',
-      body: 'You will need to re-download ~3 GB on next load.',
+      body: 'The voice model (~1.2 GB) will download again.',
       confirmLabel: 'Clear models',
       danger: true,
     });
@@ -2886,6 +3585,7 @@ if (clearCacheBtn) {
     await clearDB('omnivoice-cache'); // legacy cache cleanup
     calculateStorage();
     toast('Cached models cleared', { type: 'success' });
+    initWorker(); // asks before downloading again
   });
 }
 
@@ -2935,7 +3635,7 @@ if (clearAllBtn) {
   clearAllBtn.addEventListener('click', async () => {
     const ok = await confirmDialog({
       title: 'Clear ALL local data?',
-      body: 'Models, history, and voices will be deleted. Models (~3 GB) will re-download on next use.',
+      body: 'Models, history, and voices will be deleted. Models (~2.4 GB) will re-download on next use.',
       confirmLabel: 'Clear everything',
       danger: true,
     });
@@ -2949,6 +3649,10 @@ if (clearAllBtn) {
 }
 
 // ─── Init ───────────────────────────────────────────────────────────────────
+
+// Offline use (sw.js): the app's files and the models' descriptions are kept as they load. Online
+// everything still comes from the network first, so updates arrive as before
+navigator.serviceWorker?.register('sw.js', { updateViaCache: 'none' }).catch((e) => console.warn('[offline]', e.message));
 
 (async () => {
   await refreshVoices();

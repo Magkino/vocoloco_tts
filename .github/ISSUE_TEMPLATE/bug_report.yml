@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in the app doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. For security problems, please use [private reporting](https://github.com/Magkino/vocoloco_tts/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the app
+        2. …
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does it happen?
+      options:
+        - Model download or storage
+        - Generating speech
+        - Voice design
+        - Voice cloning (recording, upload, trim)
+        - Automatic transcription
+        - Playback, library or MP3 download
+        - Phone layout
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Chrome 141, Safari 26.1, …
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and operating system
+      placeholder: MacBook Air M2 with macOS 26.1, iPhone 14 Pro with iOS 26.1, …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Shown at the bottom of the page.
+      placeholder: v1.5.0
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: Errors or warnings from the browser's developer console, if any.
+      render: text

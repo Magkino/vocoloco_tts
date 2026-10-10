@@ -1,6 +1,7 @@
 /**
  * unmask-schedule.js — how many masked tokens each diffusion step commits.
- * Port of OmniVoice's _get_time_steps + schedule (upstream commit d8ab65f,
+ * Port of OmniVoice's _get_time_steps + schedule (OmniVoice, Copyright 2026 Xiaomi Corp.,
+ * Apache License 2.0; translated to JavaScript; upstream commit d8ab65f,
  * "fix unmask schedule"): `numStep` intervals, the last step takes the
  * remainder. The pre-fix version used numStep + 1 intervals, which made the
  * final step commit most of the audio at once (68% at 20 steps).

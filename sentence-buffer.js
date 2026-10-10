@@ -22,7 +22,8 @@ const MD_PATTERNS = [
   [/`(.+?)`/g, '$1'],
 ];
 
-// Port of OmniVoice's add_punctuation: a reference transcript must end in
+// Port of OmniVoice's add_punctuation (omnivoice/utils/text.py, Copyright 2026 Xiaomi Corp.,
+// Apache License 2.0; translated to JavaScript): a reference transcript must end in
 // punctuation, otherwise the model runs it straight into the target text.
 const END_PUNCTUATION = new Set(';:,.!?…)]}"\'“”‘’；：，。！？、）】');
 

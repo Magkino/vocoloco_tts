@@ -4,15 +4,15 @@
  * outside it to move it there, preview with a playhead. A newly placed
  * selection snaps to the quietest points nearby so it doesn't cut mid-word;
  * handle and window drags after that are exact. Clips longer than the main
- * view get an overview strip for navigation.
+ * view get an overview strip for navigation. Edits keep the selection between
+ * minS and maxS long, so it can't be dragged below what a voice needs.
  */
 
 import { drawBarVisualizer } from './player.js';
-import { quietestPoint, defaultSelection } from './audio-postprocess.js?v=2';
+import { quietestPoint, defaultSelection } from './audio-postprocess.js?v=3';
 
 const VIEW_S = 45;      // main view width for long clips (room around a 30 s selection)
 const SNAP_S = 0.15;    // snap search radius around a released edge
-const MIN_LEN_S = 0.5;  // the handles can't cross
 const STEP_S = 0.1;     // arrow-key nudge (Shift: 1 s)
 const LOUD_DB = -40;    // a 10 ms frame this loud counts as speech
 
@@ -162,16 +162,32 @@ export class TrimEditor {
     this._emit(final);
   }
 
+  // Shortest selection: minS, or the whole clip when that's shorter
+  _minLen() { return Math.min(Math.round(this.minS * this.sr), this.pcm.length); }
+
+  // The clamps stay inside the clip even for a loaded selection shorter than
+  // the minimum (a short preset): the first end-handle drag makes it valid
   _setStart(s) {
-    const minLen = MIN_LEN_S * this.sr, maxLen = this.maxS * this.sr;
+    const minLen = this._minLen(), maxLen = this.maxS * this.sr;
     s = Math.round(Math.min(Math.max(0, s), this.end - minLen));
-    this.start = Math.max(s, this.end - maxLen);
+    this.start = Math.max(0, s, this.end - maxLen);
   }
 
   _setEnd(s) {
-    const minLen = MIN_LEN_S * this.sr, maxLen = this.maxS * this.sr;
+    const minLen = this._minLen(), maxLen = this.maxS * this.sr;
     s = Math.round(Math.max(Math.min(this.pcm.length, s), this.start + minLen));
-    this.end = Math.min(s, this.start + maxLen);
+    this.end = Math.min(this.pcm.length, s, this.start + maxLen);
+  }
+
+  // A new selection dragged out from `anchor` towards `s`: between minS and maxS
+  // long, pushed past the anchor where the clip edge leaves no room
+  _span(anchor, s) {
+    const len = this.pcm.length, maxLen = this.maxS * this.sr;
+    const n = Math.min(Math.max(Math.abs(s - anchor), this._minLen()), maxLen);
+    let a = s < anchor ? anchor - n : anchor;
+    a = Math.min(Math.max(0, a), len - n);
+    this.start = Math.round(a);
+    this.end = Math.min(len, this.start + Math.round(n));
   }
 
   _moveTo(start) {
@@ -182,7 +198,7 @@ export class TrimEditor {
 
   // Snap released edges to the quietest nearby point, unless that breaks the length limits
   _snap(which) {
-    const r = SNAP_S * this.sr, maxLen = this.maxS * this.sr, minLen = MIN_LEN_S * this.sr;
+    const r = SNAP_S * this.sr, maxLen = this.maxS * this.sr, minLen = this._minLen();
     if (which !== 'end') {
       const s = quietestPoint(this.pcm, this.sr, this.start - r, this.start + r);
       if (this.end - s <= maxLen && this.end - s >= minLen) this.start = s;
@@ -218,12 +234,7 @@ export class TrimEditor {
       if (mode === 'start') this._setStart(s);
       else if (mode === 'end') this._setEnd(s);
       else if (mode === 'move') this._moveTo(orig.start + (s - orig.s0));
-      else {
-        // drag out a new selection from where the pointer went down
-        this.start = Math.min(orig.s0, s);
-        this.end = Math.max(orig.s0, s);
-        if (s < orig.s0) this._setStart(this.start); else this._setEnd(this.end);
-      }
+      else this._span(orig.s0, s); // drag out a new selection from where the pointer went down
       this._update(false);
     };
     const onUp = () => {

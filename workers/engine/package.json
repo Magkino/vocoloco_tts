@@ -1,0 +1,42 @@
+{
+  "name": "@vocoloco/engine",
+  "version": "0.1.0",
+  "description": "WebGPU inference for OmniVoice text-to-speech, its audio codec and Whisper speech recognition, plus a Qwen2 BPE tokenizer. Plain ES modules, no dependencies. Model weights are not included.",
+  "keywords": [
+    "webgpu",
+    "wgsl",
+    "text-to-speech",
+    "tts",
+    "voice-cloning",
+    "speech-recognition",
+    "whisper",
+    "omnivoice",
+    "tokenizer",
+    "bpe"
+  ],
+  "homepage": "https://github.com/Magkino/vocoloco_tts/tree/main/workers/engine#readme",
+  "bugs": "https://github.com/Magkino/vocoloco_tts/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Magkino/vocoloco_tts.git",
+    "directory": "workers/engine"
+  },
+  "license": "Apache-2.0",
+  "author": "Magkino",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./omnivoice": "./omnivoice-engine.js",
+    "./audio-decoder": "./audio-decoder.js",
+    "./audio-encoder": "./audio-encoder.js",
+    "./whisper": "./whisper-engine.js",
+    "./qwen2-tokenizer": "./qwen2-tokenizer.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "*.js"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests and syntax check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The same container as local development (Dockerfile, stage dev)
+      - name: Unit tests
+        run: docker compose run --rm --build dev node --test tests/*.test.js
+
+      - name: Syntax check (JavaScript, JSON)
+        run: |
+          docker compose run --rm -T dev sh -eu <<'EOF'
+          find . -name '*.js' -not -path './lib/*' -not -path './node_modules/*' -print0 \
+            | xargs -0 -n1 node --check
+          find . -name '*.json' -not -path './models/*' -not -path './node_modules/*' -print0 \
+            | xargs -0 node -e 'for (const f of process.argv.slice(1)) {
+                try { JSON.parse(require("fs").readFileSync(f, "utf8")); }
+                catch (e) { console.error(`${f}: ${e.message}`); process.exitCode = 1; }
+              }'
+          EOF

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findSpeechBounds, trimAndFade, quietestPoint, defaultSelection, prepareReference } from '../audio-postprocess.js';
+import { findSpeechBounds, trimAndFade, quietestPoint, longestPause, defaultSelection, prepareReference } from '../audio-postprocess.js';
 import { addEndPunctuation } from '../sentence-buffer.js';
 
 const SR = 24000;
@@ -71,6 +71,17 @@ test('quietest point lands inside a pause', () => {
   const [p0, p1] = pauses[3];
   const q = quietestPoint(pcm, SR, p0 - SR * 0.3, p1 + SR * 0.3);
   assert.ok(q >= p0 && q < p1, `${q} not in [${p0}, ${p1})`);
+});
+
+test('a noisy recording is cut in its sentence pause, not in a breath', () => {
+  // hiss at ~-45 dB throughout; speech with 200 ms breaths and one 500 ms sentence pause at 6.0–6.5 s
+  let r = 7;
+  const noise = () => ((r = (r * 1103515245 + 12345) >>> 0) / 2 ** 32 - 0.5) * 0.02;
+  const pcm = Float32Array.from({ length: SR * 10 }, noise);
+  const speech = [[0.2, 1.8], [2.0, 3.6], [3.8, 6.0], [6.5, 7.9], [8.1, 9.8]];
+  for (const [a, b] of speech) for (let i = a * SR; i < b * SR; i++) pcm[i] += 0.3 * Math.sin(2 * Math.PI * 180 * i / SR);
+  const cut = longestPause(pcm, SR, 3 * SR, 10 * SR) / SR;
+  assert.ok(cut > 6.0 && cut <= 6.3, `cut at ${cut} s`);
 });
 
 test('default selection keeps short clips whole, minus leading silence', () => {

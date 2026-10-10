@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./*.{html,js}', './workers/*.js'],
+  // hover: utilities only where a mouse can hover, so taps on phones don't leave them stuck
+  future: { hoverOnlyWhenSupported: true },
   theme: {
     extend: {
       colors: {

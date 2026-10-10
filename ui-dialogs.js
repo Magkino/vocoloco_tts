@@ -71,7 +71,7 @@ export function confirmDialog({ title, body = '', confirmLabel = 'Confirm', canc
     confirmBtn.className = 'vl-btn ' + (danger ? 'vl-btn-danger' : 'vl-btn-confirm');
     confirmBtn.textContent = confirmLabel;
 
-    actions.append(cancelBtn, confirmBtn);
+    actions.append(...(cancelLabel ? [cancelBtn] : []), confirmBtn); // cancelLabel null: a notice
     dialog.append(titleEl, bodyEl, actions);
     overlay.appendChild(dialog);
 
@@ -92,7 +92,7 @@ export function confirmDialog({ title, body = '', confirmLabel = 'Confirm', canc
       } else if (e.key === 'Tab') {
         // Focus trap between the two buttons
         e.preventDefault();
-        (document.activeElement === confirmBtn ? cancelBtn : confirmBtn).focus();
+        (document.activeElement === confirmBtn && cancelLabel ? cancelBtn : confirmBtn).focus();
       }
     };
 
