@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![GitHub Pages](https://img.shields.io/badge/demo-live-brightgreen)](https://magkino.github.io/vocoloco_tts/)
 [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-model-yellow)](https://huggingface.co/Gigsu/vocoloco-onnx)
+[![npm](https://img.shields.io/npm/v/%40vocoloco%2Fengine?label=%40vocoloco%2Fengine)](https://www.npmjs.com/package/@vocoloco/engine)
 
 VocoLoco is an open-source, local-first text-to-speech web app. It runs [OmniVoice](https://github.com/k2-fsa/OmniVoice), a 600M-parameter diffusion TTS model, on its own WebGPU engine in your browser, on desktops and phones: 600+ languages, voice cloning with on-device Whisper transcription, and MP3 export. No server, no API keys, no uploads.
 
