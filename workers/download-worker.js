@@ -5,10 +5,10 @@
  *
  * In:  { type: 'inspect', urls }    → { type: 'state', totalBytes, storedBytes }
  *      { type: 'download', urls }   → { type: 'progress', loadedBytes, totalBytes }…, then { type: 'done' }
- * Out on failure: { type: 'error', message }
+ * Out on failure: { type: 'error', code, message } (code 'disk-full': the device's storage is full)
  */
 
-import { inspectFile, openDiskFile, diskSupported } from './model-files.js?v=4';
+import { inspectFile, openDiskFile, diskSupported } from './model-files.js?v=5';
 
 const CACHE_NAME = 'omnivoice-models-v1'; // as tts-worker.js: only consulted where there is no disk store
 
@@ -45,6 +45,6 @@ self.onmessage = async ({ data: msg }) => {
     post(true);
     postMessage({ type: 'done' });
   } catch (err) {
-    postMessage({ type: 'error', message: err.message });
+    postMessage({ type: 'error', code: err.code, message: err.message });
   }
 };

@@ -5,11 +5,11 @@
  */
 
 import { toast, confirmDialog, isDialogOpen } from './ui-dialogs.js?v=2';
-import { StreamingPlayer, drawBarVisualizer, drawMiniWaveform } from './player.js';
+import { StreamingPlayer, drawBarVisualizer, drawMiniWaveform } from './player.js?v=2';
 import { chunkText } from './text-chunker.js?v=3';
 import { TrimEditor } from './trim-editor.js?v=3';
 import { prepareReference, defaultSelection, REF_PREP_VERSION } from './audio-postprocess.js?v=3';
-import { diskUsage, clearDisk } from './workers/model-files.js?v=4';
+import { diskUsage, clearDisk } from './workers/model-files.js?v=5';
 import { refInfoKey } from './workers/voice-pitch.js';
 
 const MODEL_BASE_URL = 'https://huggingface.co/Gigsu/vocoloco-onnx/resolve/main';
@@ -382,16 +382,22 @@ const cloning = { total: 0, stored: 0, loaded: 0, run: null }; // bytes; run: th
 let cloningDialogUpdate = null; // the progress dialog's, while it is open
 
 const cloningComplete = () => cloning.total > 0 && cloning.stored >= cloning.total;
-const cloningLeft = () => (cloning.total ? cloning.total - cloning.stored : 1.5e9);
+const cloningLeft = () => (cloning.total ? cloning.total - cloning.stored : 1.5 * 1024 ** 3); // in formatBytes' units
+
+// A download that couldn't be saved (code 'disk-full', workers/model-files.js): the storage is full
+function diskFullText(size) {
+  return `There isn't enough free storage on this device to save the download. Free up${size ? ` about ${size.replace(/^about /, '')}` : ' some space'} and try again; what's already downloaded is kept.`;
+}
+const cloningFailText = (e) => (e.code === 'disk-full' ? diskFullText(formatBytes(cloningLeft())) : `The voice cloning download failed: ${e.message}`);
 
 // A download-worker.js job: its final message (progress messages go to onProgress)
 function downloadJob(type, urls, onProgress) {
   return new Promise((resolve, reject) => {
-    const w = new Worker('workers/download-worker.js?v=1', { type: 'module' });
+    const w = new Worker('workers/download-worker.js?v=2', { type: 'module' });
     w.onmessage = ({ data: m }) => {
       if (m.type === 'progress') { onProgress?.(m); return; }
       w.terminate();
-      if (m.type === 'error') reject(new Error(m.message)); else resolve(m);
+      if (m.type === 'error') reject(Object.assign(new Error(m.message), { code: m.code })); else resolve(m);
     };
     w.onerror = (e) => { w.terminate(); reject(new Error(e.message || 'The download could not start')); };
     w.postMessage({ type, urls });
@@ -429,15 +435,15 @@ function downloadCloning() {
     markCloningStored();
   })().finally(() => {
     cloning.run = null;
-    if (!combinedDownload && activityLabel === 'Downloading voice cloning' && !isGenerating) hideProgress();
+    setBackground(null);
   });
   return cloning.run;
 }
 
+// In the pill next to whatever else runs (a generation keeps the bar and the pill's label)
 function onCloningProgress() {
   if (combinedDownload) { showCombinedProgress(); return; }
-  activityLabel = 'Downloading voice cloning';
-  if (cloning.total) setProgressPercent((cloning.loaded / cloning.total) * 100);
+  setBackground('Downloading voice cloning', cloning.total ? (cloning.loaded / cloning.total) * 100 : null);
   cloningDialogUpdate?.();
 }
 
@@ -447,7 +453,9 @@ async function ensureCloning() {
   if (!engineBackend()) return true; // ONNX Runtime: its encoder asks on its own (confirmEncoderDownload)
   try { await checkCloning(); } catch { /* offline: say so below if anything is missing */ }
   if (cloningComplete()) return true;
-  if (!cloning.run) {
+  // Chosen before ("Download all") but not finished, e.g. the storage ran full: no second question,
+  // the rest is downloaded (what's on disk is kept)
+  if (!cloning.run && localStorage.getItem(CLONING_KEY) !== '1') {
     const ok = await confirmDialog({
       title: 'Download voice cloning?',
       body: `Cloning a voice needs two more models: speech recognition, which writes down what your recording says, and the voice encoder. One-time download, stored on this device.${mobileDataNote()}`,
@@ -510,7 +518,7 @@ function cloningProgressDialog() {
       else toast('Voice cloning is ready', { type: 'success' });
     }, (e) => {
       close(false);
-      toast(`The voice cloning download failed: ${e.message}`, { type: 'error' });
+      toast(cloningFailText(e), { type: 'error' });
     });
   });
 }
@@ -545,7 +553,7 @@ function encodeAlone(pcmF32) {
     setStatus('Analyzing voice…');
     setActivity('Analyzing voice');
     showProgress('indeterminate');
-    const w = new Worker('workers/encoder-worker.js?v=1', { type: 'module' });
+    const w = new Worker('workers/encoder-worker.js?v=2', { type: 'module' });
     try {
       return await new Promise((resolve, reject) => {
         w.onmessage = ({ data: m }) => {
@@ -815,14 +823,25 @@ function selectVoice(v) {
 
 const activityEl = $('activity');
 const activityText = $('activity-text');
+const activityBg = $('activity-bg');
 let activityLabel = 'Working';
 let activityPct = null; // null: no measure yet
+let activityOn = false; // a job in the foreground (generating, testing, loading…), with the Studio's bar
+let background = null; // { label, pct }: a download alongside (voice cloning), never in the job's way
 let busyBtn = null; // the button whose job runs (a voice's Test): shows the same
 
+const activityLine = (label, pct) => (pct == null ? `${label}…` : `${label} ${Math.floor(pct)}%`);
+
+// The pill shows the job; a background download only its percentage after it, or the
+// download alone when there is no job
 function renderActivity() {
-  const text = activityPct == null ? `${activityLabel}…` : `${activityLabel} ${Math.floor(activityPct)}%`;
-  activityText.textContent = text;
-  activityEl.style.setProperty('--pct', `${activityPct ?? 0}%`);
+  const both = activityOn && background;
+  activityText.textContent = activityOn ? activityLine(activityLabel, activityPct)
+    : background ? activityLine(background.label, background.pct) : '';
+  activityBg.textContent = both ? `↓ ${Math.floor(background.pct ?? 0)}%` : '';
+  activityBg.classList.toggle('hidden', !both);
+  activityEl.classList.toggle('hidden', !activityOn && !background);
+  activityEl.style.setProperty('--pct', `${(activityOn ? activityPct : background?.pct) ?? 0}%`);
   if (busyBtn) {
     busyBtn.textContent = activityPct == null ? `${activityLabel.split(' ')[0]}…` : `${Math.floor(activityPct)}%`; // a narrow button
     busyBtn.style.setProperty('--pct', `${activityPct ?? 0}%`);
@@ -844,7 +863,7 @@ function showProgress(mode) {
   } else {
     progressBar.classList.remove('indeterminate');
   }
-  activityEl.classList.remove('hidden');
+  activityOn = true;
   renderActivity();
 }
 
@@ -853,7 +872,7 @@ function setProgressPercent(pct) {
   progressBar.classList.remove('indeterminate');
   progressBar.style.width = Math.min(100, pct) + '%';
   activityPct = Math.min(100, pct);
-  activityEl.classList.remove('hidden');
+  activityOn = true;
   renderActivity();
 }
 
@@ -861,7 +880,14 @@ function hideProgress() {
   progressBar.classList.add('hidden');
   progressBar.classList.remove('indeterminate');
   progressBar.style.width = '0%';
-  activityEl.classList.add('hidden');
+  activityOn = false;
+  renderActivity();
+}
+
+// A download that runs alongside the jobs (null: none)
+function setBackground(label, pct = null) {
+  background = label ? { label, pct } : null;
+  renderActivity();
 }
 
 // ─── Loading overlay / first-run experience ─────────────────────────────────
@@ -994,7 +1020,7 @@ function startModelDownload(withCloning = false) {
   setStatus('Downloading…');
   if (both) {
     combinedDownload = { loaded: downloadPlan.cachedBytes || 0, total: downloadPlan.totalBytes || 0 };
-    downloadCloning().catch((e) => toast(`The voice cloning download failed: ${e.message}`, { type: 'error' }));
+    downloadCloning().catch((e) => toast(cloningFailText(e), { type: 'error' }));
   } else if (offerCloning) localStorage.setItem(CLONING_KEY, '0');
   ttsWorker.postMessage({ type: 'start-download' });
 }
@@ -1286,7 +1312,7 @@ function initWorker() {
   rejectPendingEncodes('Engine restarted');
   resolveJob({ kind: 'cancelled' });
   speechParked = null; // a new worker either way
-  ttsWorker = new Worker('workers/tts-worker.js?v=11', { type: 'module' });
+  ttsWorker = new Worker('workers/tts-worker.js?v=12', { type: 'module' });
   workerAnswered = false;
   ttsWorker.onerror = (e) => {
     console.error('Worker error:', e);
@@ -1342,7 +1368,8 @@ function initWorker() {
           ready();
           // chosen before but not finished (tab closed mid-way): goes on by itself
           if (msg.backend === 'engine' && localStorage.getItem(CLONING_KEY) === '1' && !cloning.run) {
-            checkCloning().then(() => { if (!cloningComplete()) return downloadCloning(); }).catch(() => {});
+            checkCloning().then(() => { if (!cloningComplete()) return downloadCloning(); })
+              .catch((e) => { if (e.code === 'disk-full') toast(cloningFailText(e), { type: 'error' }); });
           }
         }
         keepStorage(); // also for models stored before the app asked
@@ -1394,7 +1421,8 @@ function initWorker() {
           console.error(msg.message);
           setBusy('load', false);
           if (onSpeechReady) { isReady = false; onSpeechReady(false); onSpeechReady = null; }
-          showLoadFailure(msg.code === 'no-engine' ? "This browser isn't supported" : 'Something went wrong', msg.message);
+          if (msg.code === 'disk-full') showLoadFailure('Not enough storage', diskFullText(downloadPlan && downloadSizeText(downloadPlan)));
+          else showLoadFailure(msg.code === 'no-engine' ? "This browser isn't supported" : 'Something went wrong', msg.message);
         }
         break;
     }
@@ -1487,11 +1515,17 @@ const player = new StreamingPlayer({
   gapSeconds: 0.15,
   onStateChange: (state) => updateReplayBtn(state === 'playing'),
   onAutoplayBlocked: () => {
-    toast('Click anywhere to start audio playback');
-    const resume = () => { player.getAudioCtx(); document.removeEventListener('pointerdown', resume); };
-    document.addEventListener('pointerdown', resume);
+    if (audioBlocked) return;
+    audioBlocked = true;
+    toast(`${TOUCH_KEYBOARD.matches ? 'Tap' : 'Click'} anywhere to play the audio`);
+    const resume = () => { audioBlocked = false; player.getAudioCtx(); document.removeEventListener('pointerdown', resume, true); };
+    document.addEventListener('pointerdown', resume, true);
   },
 });
+let audioBlocked = false; // waiting for the tap that lets the audio play
+
+// Back from another app or a locked screen while audio should play: iOS may have stopped it
+document.addEventListener('visibilitychange', () => { if (!document.hidden) player.ensureRunning(); });
 
 function updateReplayBtn(playing) {
   if (!replayBtn) return;
@@ -2519,7 +2553,7 @@ const asr = {
 
 function asrWorker() {
   if (asr.worker) return asr.worker;
-  const w = new Worker('workers/asr-worker.js?v=5', { type: 'module' });
+  const w = new Worker('workers/asr-worker.js?v=6', { type: 'module' });
   w.onmessage = (e) => {
     const m = e.data;
     if (m.type === 'progress') {

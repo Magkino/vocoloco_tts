@@ -31,7 +31,7 @@ function syncState() {
     const first = view === null;
     view = name;
     root.dataset.view = name;
-    if (!first && phone.matches) window.scrollTo(0, scrollPos[name] || 0);
+    if (!first && phone.matches) document.body.scrollTo(0, scrollPos[name] || 0);
   }
   // getClientRects is empty while the wizard or its view is display:none
   root.classList.toggle('sheet-open', phone.matches && !!wizard && wizard.getClientRects().length > 0);
@@ -42,13 +42,14 @@ for (const el of [...views, wizard]) if (el) styleObserver.observe(el, { attribu
 phone.addEventListener('change', syncState);
 syncState();
 
-window.addEventListener('scroll', () => { if (view) scrollPos[view] = window.scrollY; }, { passive: true });
+// On the phone the page scrolls inside body, not the document (mobile.css)
+document.body.addEventListener('scroll', () => { if (view) scrollPos[view] = document.body.scrollTop; }, { passive: true });
 
 // Tapping the tab you're on scrolls back to the top, like a native tab bar
 document.addEventListener('click', (e) => {
   const tab = e.target.closest && e.target.closest('.mobile-tab');
   if (!tab || !phone.matches || tab.dataset.view !== view) return;
-  window.scrollTo({ top: 0, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+  document.body.scrollTo({ top: 0, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
 }, true);
 
 // ─── Keyboard (visualViewport) ──────────────────────────────────────────────

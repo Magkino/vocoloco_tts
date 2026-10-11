@@ -44,11 +44,18 @@
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior-y: none; /* no pull-to-refresh in the middle of a generation */
     background: #0f131a;
+    /* The page scrolls inside body, the document never does, so the browser's toolbar stays put.
+       Collapsing it (Safari's Top and Bottom tab layouts) shook the fixed bars, and at the end
+       of the page iOS 26 stopped painting the tab bar in the strip the toolbar had left */
+    height: 100%;
+    overflow: hidden;
   }
   html.sheet-open, html.sheet-open body { overflow: hidden; }
   body {
     display: block !important;
-    min-height: 100svh; /* not dvh: that changes on every frame while the browser's toolbar slides */
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
     padding: 0 !important;
     background-image: none !important;
     font-family: -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
@@ -110,12 +117,6 @@
     background: #0f131a;
     border-bottom: 0 !important;
     border-top: 0.5px solid var(--m-sep);
-  }
-  /* The bar's colour carries on below it: whatever the browser reveals under the bar while
-     its toolbar slides away is bar, never page or black */
-  .mobile-tabs::after {
-    content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 160px;
-    background: inherit; pointer-events: none;
   }
   .mobile-tab {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;

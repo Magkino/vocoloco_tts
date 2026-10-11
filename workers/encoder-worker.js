@@ -12,7 +12,7 @@
  *      { type: 'error', id, code, message }
  */
 
-import { inspectFile, openDiskFile } from './model-files.js?v=4';
+import { inspectFile, openDiskFile } from './model-files.js?v=5';
 import { httpSource } from './engine/omnivoice-engine.js';
 import { AudioEncoder } from './engine/audio-encoder.js';
 

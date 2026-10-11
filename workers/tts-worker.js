@@ -10,7 +10,7 @@ import { trimAndFade, peakAbs } from '../audio-postprocess.js?v=3';
 import { timeStretch } from '../time-stretch.js';
 import { GpuPostProcessor } from './gpu-postprocess.js?v=2';
 import { unmaskSchedule } from './unmask-schedule.js?v=2';
-import { inspectFile, loadFile, openDiskFile, diskHasFiles } from './model-files.js?v=4';
+import { inspectFile, loadFile, openDiskFile, diskHasFiles } from './model-files.js?v=5';
 import { voicePitch, refInfoKey, genderInstruct } from './voice-pitch.js';
 import { OmniVoiceEngine, httpSource } from './engine/omnivoice-engine.js';
 import { AudioDecoder } from './engine/audio-decoder.js';
@@ -517,6 +517,7 @@ async function downloadFiles(urls, confirmDownload, load) {
 // 'models-gone': a model file the engine reads from vanished (the browser cleared the site's
 // storage, e.g. when the device ran low on space); app.js offers the download again
 function errorCode(err, otherwise = undefined) {
+  if (err?.code === 'disk-full') return 'disk-full'; // a download couldn't be written (model-files.js)
   return err?.name === 'NotFoundError' ? 'models-gone' : otherwise;
 }
 
@@ -671,7 +672,7 @@ async function init({ modelBaseUrl, forceCPU = false, confirmDownload = false, l
     if (adapter) downloadOk = false; // agreed to the engine's download, not to ONNX Runtime's (asked again)
     await initOrt(modelBaseUrl, forceCPU, confirmDownload);
   } catch (err) {
-    postMessage({ type: 'error', message: `Init failed: ${err.message}` });
+    postMessage({ type: 'error', code: errorCode(err), message: `Init failed: ${err.message}` });
   }
 }
 

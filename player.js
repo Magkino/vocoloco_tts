@@ -134,8 +134,21 @@ export class StreamingPlayer {
 
   getAudioCtx() {
     if (!this._ctx || this._ctx.state === 'closed') this._ctx = new AudioContext({ sampleRate: this.sr });
-    if (this._ctx.state === 'suspended') this._ctx.resume().catch(() => {});
+    if (this._ctx.state !== 'running') this._ctx.resume().catch(() => {}); // 'suspended', or iOS's 'interrupted'
     return this._ctx;
+  }
+
+  // Audio that should be playing now: a context that doesn't run (iOS suspends or interrupts it
+  // during a long generation, when the screen dims or another app plays) plays nothing at all.
+  // Resuming without a tap usually fails there, so the app asks for one (onAutoplayBlocked)
+  ensureRunning() {
+    const ctx = this._ctx;
+    if (!ctx || ctx.state === 'running') return;
+    ctx.resume().catch(() => {});
+    clearTimeout(this._runCheck);
+    this._runCheck = setTimeout(() => {
+      if (ctx.state !== 'running' && (this._playing || this._oneShot) && this.onAutoplayBlocked) this.onAutoplayBlocked();
+    }, 400);
   }
 
   isPlaying() { return this._playing; }
@@ -168,11 +181,9 @@ export class StreamingPlayer {
     this._startRaf();
     this.onStateChange('playing');
     // Autoplay policy: generation is user-initiated so the context is normally
-    // running; if it stays suspended, let the app show a "click to play" hint.
-    const ctx = this.getAudioCtx();
-    setTimeout(() => {
-      if (ctx.state === 'suspended' && this.onAutoplayBlocked) this.onAutoplayBlocked();
-    }, 400);
+    // running; if it doesn't, the app shows a "tap to play" hint
+    this.getAudioCtx();
+    this.ensureRunning();
   }
 
   /** Append a chunk, preceded by `gapSeconds` of silence (default: the constructor's gap). */
@@ -258,6 +269,7 @@ export class StreamingPlayer {
     this._updatePlayhead(target);
     this._startRaf();
     this.onStateChange('playing');
+    this.ensureRunning();
   }
 
   // ── One-shot previews (library cards, wizard, voice tests) ──
@@ -279,6 +291,7 @@ export class StreamingPlayer {
     };
     this._oneShot = entry;
     src.start();
+    this.ensureRunning();
   }
 
   stopOneShot() {

@@ -14,7 +14,7 @@
  *      { type: 'error', id, code, message }
  */
 
-import { inspectFile, openDiskFile } from './model-files.js?v=4';
+import { inspectFile, openDiskFile } from './model-files.js?v=5';
 import { httpSource } from './engine/omnivoice-engine.js';
 import { WhisperEngine } from './engine/whisper-engine.js';
 

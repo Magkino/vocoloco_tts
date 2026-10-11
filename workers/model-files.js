@@ -121,7 +121,7 @@ async function fetchRange(url, off, len, out, onBytes) {
       return;
     } catch (e) {
       if (got) onBytes(-got);
-      if (e instanceof NoRangeSupport || attempt >= MAX_ATTEMPTS) throw e;
+      if (e instanceof NoRangeSupport || e.code === 'disk-full' || attempt >= MAX_ATTEMPTS) throw e;
       console.warn(`[model-files] range ${off}+${len} failed (${e.message}), retry ${attempt}/${MAX_ATTEMPTS - 1}`);
       await new Promise((r) => setTimeout(r, 1000 * attempt));
     }
@@ -266,6 +266,12 @@ export async function openDiskFile(url, { size = 0, onBytes = () => {} } = {}) {
 
 class DownloadError extends Error {}
 
+// A write that fails or comes up short mid-download: almost always a full disk. code 'disk-full'
+// lets the app say so instead of a generic error
+function diskError(e) {
+  return Object.assign(new Error(`couldn't write to this device's storage (${e.message})`), { code: 'disk-full', cause: e });
+}
+
 // Writes the missing parts of `url` to dir/name, marking each in name.parts once it is on disk
 async function downloadToDisk(dir, name, url, size, onBytes) {
   const data = await (await dir.getFileHandle(name, { create: true })).createSyncAccessHandle();
@@ -280,20 +286,27 @@ async function downloadToDisk(dir, name, url, size, onBytes) {
     size ||= await headSize(url).catch(() => 0);
     if (!size) throw new Error(`size of ${url} unknown`);
     const n = partCount(size);
+    const disk = async (op) => { try { return await op(); } catch (e) { throw diskError(e); } };
     if (await marks.getSize() !== n || await data.getSize() !== size) {
-      await marks.truncate(0);
-      await marks.truncate(n);
-      await data.truncate(size);
+      await disk(async () => {
+        await marks.truncate(0);
+        await marks.truncate(n);
+        await data.truncate(size);
+      });
     }
     const done = new Uint8Array(n);
     marks.read(done, { at: 0 });
-    const markDone = async (i) => {
+    const markDone = (i) => disk(async () => {
       await data.flush();
       marks.write(Uint8Array.of(1), { at: i });
       await marks.flush();
       done[i] = 1;
+    });
+    const write = (chunk, pos) => {
+      let written;
+      try { written = data.write(chunk, { at: pos }); } catch (e) { throw diskError(e); }
+      if (written !== chunk.byteLength) throw diskError(new Error(`${written} of ${chunk.byteLength} bytes written`));
     };
-    const write = (chunk, pos) => data.write(chunk, { at: pos });
 
     // Written to disk as it arrives
     const missing = Array.from({ length: n }, (_, i) => i).filter((i) => !done[i]);

@@ -407,6 +407,8 @@
   .vl-progress > div { height: 100%; width: 0; background: #4ade80; transition: width 0.3s; }
   .vl-progress-stats { font-size: 12px; color: #94a3b8; font-variant-numeric: tabular-nums; }
   #activity-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* A download running alongside the job in the pill (app.js setBackground) */
+  #activity-bg { flex: none; padding-left: 7px; border-left: 1px solid rgba(74, 222, 128, 0.3); color: #94a3b8; }
   .vl-spin, .btn-busy::before {
     width: 9px; height: 9px; flex: none; border-radius: 50%;
     border: 2px solid currentColor; border-right-color: transparent; animation: vl-spin 0.8s linear infinite;
@@ -482,7 +484,7 @@
   }
 </style>
 <!-- Phone layout (native app shell); desktop is untouched, see the file header -->
-<link rel="stylesheet" href="mobile.css?v=2">
+<link rel="stylesheet" href="mobile.css?v=3">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -522,7 +524,7 @@
   <h1 class="text-3xl md:text-4xl font-bold text-omni-neon mb-1 tracking-wide">VocoLoco</h1>
   <h2 class="text-4xl md:text-5xl font-extrabold text-white mb-2">Personal Studio</h2>
   <p class="text-omni-text-muted text-sm tracking-wider">free, private text to speech in your browser</p>
-  <div id="activity" class="activity hidden" aria-hidden="true"><span class="vl-spin"></span><span id="activity-text"></span></div><!-- #status speaks for it -->
+  <div id="activity" class="activity hidden" aria-hidden="true"><span class="vl-spin"></span><span id="activity-text"></span><span id="activity-bg" class="hidden"></span></div><!-- #status speaks for it -->
 
 </header>
 
@@ -788,7 +790,7 @@
               <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
               <div class="text-sm font-semibold text-white"><span class="m-fine">Drop an audio file here</span><span class="m-coarse">Choose an audio file</span></div>
               <div class="text-xs text-omni-text-muted" id="wiz-upload-hint"><span class="m-fine">or click to browse &middot; </span>MP3, WAV, M4A, OGG or a video &middot; 3 s or longer, you pick the part to clone next</div>
-              <input type="file" id="wiz-file-input" accept="audio/*,video/*" class="hidden"/>
+              <input type="file" id="wiz-file-input" accept="audio/*,video/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac,.webm,.mp4,.m4v,.mov" class="hidden"/><!-- the extensions too: iOS greys out MP3s in Files for audio/* alone -->
             </div>
             <div id="wiz-upload-error" class="text-xs text-amber-400/90 text-center" role="status" aria-live="polite"></div>
           </div>
@@ -1021,6 +1023,20 @@
       <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
         <div>
           <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.5.1</span>
+            <span class="text-[10px] text-omni-text-muted/40">Oct 11, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>iPhone: the tab bar no longer disappears at the end of a page or shakes while scrolling</li>
+            <li>Long texts on phones play after generating; if the phone stopped the audio meanwhile, a tap starts it</li>
+            <li>A full device says so, instead of a failed download</li>
+            <li>Voice cloning chosen at the first download finishes by itself, without asking again</li>
+            <li>A download in the background no longer mixes up the progress of a generation</li>
+            <li>iPhone: MP3 files can be picked in Files for a new voice</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
+          <div class="flex items-center gap-2 mb-1">
             <span class="text-[11px] font-bold text-omni-neon">v1.5.0</span>
             <span class="text-[10px] text-omni-text-muted/40">Oct 11, 2026</span>
           </div>
@@ -1163,7 +1179,7 @@
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px] text-center leading-relaxed px-4">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Runs locally in your browser &middot; <button id="legal-btn" type="button" class="underline hover:text-omni-text-muted/60 cursor-pointer">Disclaimer &amp; privacy</button> &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.5.0</button>
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Runs locally in your browser &middot; <button id="legal-btn" type="button" class="underline hover:text-omni-text-muted/60 cursor-pointer">Disclaimer &amp; privacy</button> &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.5.1</button>
   </div>
 
 </footer>
@@ -1195,7 +1211,7 @@
   legalDialog.addEventListener('click', (e) => { if (e.target === legalDialog) legalDialog.close(); });
 
   // Changelog toggle
-  const CURRENT_VERSION = 'v1.5.0';
+  const CURRENT_VERSION = 'v1.5.1';
   document.getElementById('version-btn').textContent = CURRENT_VERSION;
   const changelogPanel = document.getElementById('changelog-panel');
   function toggleChangelog(show) {
@@ -1290,7 +1306,7 @@
   lame.onload = () => {
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = 'app.js?v=14';
+    s.src = 'app.js?v=15';
     document.body.appendChild(s);
   };
   lame.onerror = () => {
@@ -1301,6 +1317,6 @@
 })();
 </script>
 <!-- Phone app shell behaviour (keyboard, sheets, tabs); see mobile.css -->
-<script type="module" src="mobile.js?v=2"></script>
+<script type="module" src="mobile.js?v=3"></script>
 </body>
 </html>
