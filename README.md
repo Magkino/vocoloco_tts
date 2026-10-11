@@ -10,6 +10,8 @@ VocoLoco is an open-source, local-first text-to-speech web app. It runs [OmniVoi
 
 **Try it: [https://magkino.github.io/vocoloco_tts/](https://magkino.github.io/vocoloco_tts/)**
 
+<p align="center"><img src=".github/demo.gif" width="320" alt="VocoLoco on a phone: a sentence is typed, the speech is generated on the device, and its waveform appears"></p>
+
 ---
 
 ## Features

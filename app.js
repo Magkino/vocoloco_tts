@@ -935,7 +935,7 @@ function askModelDownload(plan, later = false) {
   }
   loadingSub.textContent = (loadingSub.textContent + mobileDataNote()).trim();
   // with cloning: everything at once, or the speech model alone
-  const speechBytes = plan.totalBytes ? plan.totalBytes - plan.cachedBytes : 1.2e9;
+  const speechBytes = plan.totalBytes ? plan.totalBytes - plan.cachedBytes : 1.2 * 1024 ** 3; // 'about 1.2 GB' in formatBytes' units
   downloadStartBtn.textContent = offerCloning ? `Download all · ${plan.totalBytes ? '' : 'about '}${formatBytes(speechBytes + cloningLeft())}` : `Download ${size}`;
   downloadSpeechOnlyBtn.textContent = `Speech only · ${size}`;
   downloadSpeechOnlyBtn.classList.toggle('hidden', !offerCloning);
