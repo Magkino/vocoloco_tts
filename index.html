@@ -484,7 +484,7 @@
   }
 </style>
 <!-- Phone layout (native app shell); desktop is untouched, see the file header -->
-<link rel="stylesheet" href="mobile.css?v=3">
+<link rel="stylesheet" href="mobile.css?v=4">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -1023,6 +1023,15 @@
       <div class="flex flex-col gap-3 max-h-48 overflow-y-auto" style="scrollbar-width: thin; scrollbar-color: #2d3748 transparent;">
         <div>
           <div class="flex items-center gap-2 mb-1">
+            <span class="text-[11px] font-bold text-omni-neon">v1.5.2</span>
+            <span class="text-[10px] text-omni-text-muted/40">Oct 11, 2026</span>
+          </div>
+          <ul class="text-[11px] text-omni-text-muted/60 leading-relaxed pl-3" style="list-style: disc outside;">
+            <li>iPhone: nothing hides under the top bar, the Generate button or the tab bar anymore</li>
+          </ul>
+        </div>
+        <div class="border-t border-omni-border/20 pt-3">
+          <div class="flex items-center gap-2 mb-1">
             <span class="text-[11px] font-bold text-omni-neon">v1.5.1</span>
             <span class="text-[10px] text-omni-text-muted/40">Oct 11, 2026</span>
           </div>
@@ -1179,7 +1188,7 @@
   </div>
 
   <div class="text-omni-text-muted/40 text-[10px] text-center leading-relaxed px-4">
-    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Runs locally in your browser &middot; <button id="legal-btn" type="button" class="underline hover:text-omni-text-muted/60 cursor-pointer">Disclaimer &amp; privacy</button> &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.5.1</button>
+    Built with <a href="https://github.com/k2-fsa/OmniVoice" target="_blank" rel="noopener" class="underline hover:text-omni-text-muted/60">OmniVoice</a> &middot; Runs locally in your browser &middot; <button id="legal-btn" type="button" class="underline hover:text-omni-text-muted/60 cursor-pointer">Disclaimer &amp; privacy</button> &middot; <button id="version-btn" class="underline hover:text-omni-text-muted/60 cursor-pointer">v1.5.2</button>
   </div>
 
 </footer>
@@ -1211,7 +1220,7 @@
   legalDialog.addEventListener('click', (e) => { if (e.target === legalDialog) legalDialog.close(); });
 
   // Changelog toggle
-  const CURRENT_VERSION = 'v1.5.1';
+  const CURRENT_VERSION = 'v1.5.2';
   document.getElementById('version-btn').textContent = CURRENT_VERSION;
   const changelogPanel = document.getElementById('changelog-panel');
   function toggleChangelog(show) {

@@ -47,13 +47,15 @@
     /* The page scrolls inside body, the document never does, so the browser's toolbar stays put.
        Collapsing it (Safari's Top and Bottom tab layouts) shook the fixed bars, and at the end
        of the page iOS 26 stopped painting the tab bar in the strip the toolbar had left */
-    height: 100%;
     overflow: hidden;
   }
   html.sheet-open, html.sheet-open body { overflow: hidden; }
   body {
     display: block !important;
-    height: 100%;
+    /* Fixed: body spans exactly what the fixed bars span. Its min-h-screen (100vh) is the whole
+       screen in Safari 26, toolbars included, which put the end of the page under the bars */
+    position: fixed !important; inset: 0;
+    min-height: 0 !important;
     overflow-x: hidden;
     overflow-y: auto;
     padding: 0 !important;
