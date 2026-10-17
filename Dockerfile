@@ -3,7 +3,7 @@
 # The app itself is static files and needs no build.
 
 # Unit tests and tooling: docker compose run --rm --build dev node --test tests/*.test.js
-FROM node:26.9.0-slim AS dev
+FROM node:26.11.1-slim AS dev
 WORKDIR /src
 COPY --exclude=models . .
 
