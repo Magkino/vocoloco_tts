@@ -10,7 +10,7 @@
   },
   "//": "onnxruntime-web is not installed: the app loads it from jsDelivr at this version (workers/tts-worker.js, ORT_CDN), where the engine can't run. It is listed so updates are proposed; tests/deps.test.js keeps the two in step.",
   "optionalDependencies": {
-    "onnxruntime-web": "1.30.0"
+    "onnxruntime-web": "1.31.1"
   },
   "devDependencies": {
     "@tailwindcss/container-queries": "0.1.1",
